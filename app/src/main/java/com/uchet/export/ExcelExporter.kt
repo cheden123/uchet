@@ -7,10 +7,10 @@ import com.uchet.data.model.ExportData
 import com.uchet.util.formatMeters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.apache.poi.ss.usermodel.CellStyle
 import org.apache.poi.ss.usermodel.FillPatternType
 import org.apache.poi.ss.usermodel.IndexedColors
-import org.apache.poi.ss.usermodel.Row
+import org.apache.poi.xssf.usermodel.XSSFCellStyle
+import org.apache.poi.xssf.usermodel.XSSFRow
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import java.io.File
 import java.io.FileOutputStream
@@ -71,7 +71,7 @@ class ExcelExporter(private val context: Context) {
         }
     }
 
-    private fun headerRow(row: Row, headers: List<String>, style: CellStyle) {
+    private fun headerRow(row: XSSFRow, headers: List<String>, style: XSSFCellStyle) {
         headers.forEachIndexed { i, h ->
             row.createCell(i).setCellValue(h).also { row.getCell(i).cellStyle = style }
         }
@@ -80,14 +80,14 @@ class ExcelExporter(private val context: Context) {
     private fun writePipesSheet(
         wb: XSSFWorkbook,
         data: ExportData,
-        headerStyle: CellStyle,
-        titleStyle: CellStyle,
-        boldStyle: CellStyle,
-        lengthStyle: CellStyle
+        headerStyle: XSSFCellStyle,
+        titleStyle: XSSFCellStyle,
+        boldStyle: XSSFCellStyle,
+        lengthStyle: XSSFCellStyle
     ) {
         val sheet = wb.createSheet("Трубы")
         var r = 0
-        fun cell(row: Int, col: Int, value: String, style: CellStyle? = null) {
+        fun cell(row: Int, col: Int, value: String, style: XSSFCellStyle? = null) {
             val rr = sheet.getRow(row) ?: sheet.createRow(row)
             rr.createCell(col).setCellValue(value).also { if (style != null) rr.getCell(col).cellStyle = style }
         }
@@ -123,9 +123,9 @@ class ExcelExporter(private val context: Context) {
     private fun writeEquipmentSheet(
         wb: XSSFWorkbook,
         data: ExportData,
-        headerStyle: CellStyle,
-        boldStyle: CellStyle,
-        lengthStyle: CellStyle
+        headerStyle: XSSFCellStyle,
+        boldStyle: XSSFCellStyle,
+        lengthStyle: XSSFCellStyle
     ) {
         val sheet = wb.createSheet("Оборудование")
         var r = 0
@@ -149,9 +149,9 @@ class ExcelExporter(private val context: Context) {
     private fun writeDiameterSheet(
         wb: XSSFWorkbook,
         data: ExportData,
-        headerStyle: CellStyle,
-        boldStyle: CellStyle,
-        lengthStyle: CellStyle
+        headerStyle: XSSFCellStyle,
+        boldStyle: XSSFCellStyle,
+        lengthStyle: XSSFCellStyle
     ) {
         val sheet = wb.createSheet("Типоразмеры")
         var r = 0
@@ -174,9 +174,9 @@ class ExcelExporter(private val context: Context) {
     private fun writeBhaSheet(
         wb: XSSFWorkbook,
         data: ExportData,
-        headerStyle: CellStyle,
-        boldStyle: CellStyle,
-        lengthStyle: CellStyle
+        headerStyle: XSSFCellStyle,
+        boldStyle: XSSFCellStyle,
+        lengthStyle: XSSFCellStyle
     ) {
         val sheet = wb.createSheet("Компоновка")
         var r = 0
