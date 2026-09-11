@@ -59,8 +59,13 @@ class MeasureViewModel(private val repo: UchetRepository) : ViewModel() {
             Quad(spoId, run, p, c)
         }
             .flatMapLatest { (spoId, run, p, c) ->
-                if (spoId == null || run == null || p.isEmpty()) flowOf(null)
-                else flow { emit(repo.getCumulativeLengthUpTo(spoId, run.id, p.last().indexInRun)) }
+                flow {
+                    if (spoId != null && run != null && p.isNotEmpty()) {
+                        emit(repo.getCumulativeLengthUpTo(spoId, run.id, p.last().indexInRun))
+                    } else {
+                        emit(null)
+                    }
+                }
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
