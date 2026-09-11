@@ -34,6 +34,11 @@ import com.uchet.ui.MainViewModel
 import com.uchet.ui.components.EmptyState
 import com.uchet.util.formatMetersFull
 
+private sealed interface PipeListItem {
+    data class Header(val runNumber: Int, val runId: Long) : PipeListItem
+    data class Pipe(val row: SpoPipeRow) : PipeListItem
+}
+
 @Composable
 fun SpoPipesScreen(
     mainViewModel: MainViewModel,
@@ -50,20 +55,15 @@ fun SpoPipesScreen(
         return
     }
 
-    sealed interface Item {
-        data class Header(val runNumber: Int, val runId: Long) : Item
-        data class Pipe(val row: SpoPipeRow) : Item
-    }
-
     val displayItems = remember(rows) {
         buildList {
             var lastRun = -1
             for (row in rows) {
                 if (row.runNumber != lastRun) {
-                    add(Item.Header(row.runNumber, row.runId))
+                    add(PipeListItem.Header(row.runNumber, row.runId))
                     lastRun = row.runNumber
                 }
-                add(Item.Pipe(row))
+                add(PipeListItem.Pipe(row))
             }
         }
     }
@@ -79,13 +79,13 @@ fun SpoPipesScreen(
     ) {
         items(displayItems, key = {
             when (it) {
-                is Item.Header -> "runheader_${it.runId}"
-                is Item.Pipe -> "sporow_${it.row.pipeId}"
+                is PipeListItem.Header -> "runheader_${it.runId}"
+                is PipeListItem.Pipe -> "sporow_${it.row.pipeId}"
             }
         }) { item ->
             when (item) {
-                is Item.Header -> RunHeaderRow(item.runNumber, item.runId, onEditRun)
-                is Item.Pipe -> PipeDetailRow(item.row)
+                is PipeListItem.Header -> RunHeaderRow(item.runNumber, item.runId, onEditRun)
+                is PipeListItem.Pipe -> PipeDetailRow(item.row)
             }
         }
     }
