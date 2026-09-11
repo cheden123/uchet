@@ -108,7 +108,7 @@ fun MeasureScreen(
     var diameter by rememberSaveable { mutableStateOf(viewModel.lastDiameterOrBlank()) }
 
     LaunchedEffect(presets) {
-        if (diameter.isBlank() && presets.isNotEmpty()) diameter = presets.first()
+        if (diameter.isBlank() && presets.isNotEmpty()) diameter = presets.first().name
     }
 
     var showDiameterPicker by remember { mutableStateOf(false) }
