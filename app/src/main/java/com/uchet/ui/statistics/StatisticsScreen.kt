@@ -48,9 +48,11 @@ fun StatisticsScreen(
     }
 
     val byDiameter = remember(rows) {
-        rows.groupBy { it.diameterLabel }
-            .map { (label, list) -> DiameterGroup(label, list.size, list.sumOf { it.lengthM }) }
-            .sortedBy { rows.indexOfFirst { it.diameterLabel == label } }
+        val order = rows.map { it.diameterLabel }.distinct()
+        order.map { label ->
+            val list = rows.filter { it.diameterLabel == label }
+            DiameterGroup(label, list.size, list.sumOf { it.lengthM })
+        }
     }
     val runNumberById = remember(allRuns) { allRuns.mapIndexed { i, r -> r.id to (i + 1) }.toMap() }
     val history = remember(completedRuns, rows, runNumberById) {
