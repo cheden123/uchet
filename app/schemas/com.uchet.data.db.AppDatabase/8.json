@@ -1,0 +1,117 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 8,
+    "identityHash": "00000000000000000000000000000000",
+    "entities": [
+      {
+        "tableName": "spo",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startDate` INTEGER NOT NULL, `wellCluster` TEXT NOT NULL, `wellNumber` TEXT NOT NULL, `fieldName` TEXT NOT NULL, `title` TEXT NOT NULL, `isCompleted` INTEGER NOT NULL, `testField` TEXT NOT NULL DEFAULT '')",
+        "fields": [
+          {"fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "startDate", "columnName": "startDate", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "wellCluster", "columnName": "wellCluster", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "wellNumber", "columnName": "wellNumber", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "fieldName", "columnName": "fieldName", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "title", "columnName": "title", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "isCompleted", "columnName": "isCompleted", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "testField", "columnName": "testField", "affinity": "TEXT", "notNull": true, "defaultValue": "''"}
+        ],
+        "primaryKey": {"autoGenerate": true, "columnNames": ["id"]},
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "runs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `spoId` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `isCompleted` INTEGER NOT NULL, FOREIGN KEY(`spoId`) REFERENCES `spo`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {"fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "spoId", "columnName": "spoId", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "createdAt", "columnName": "createdAt", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "isCompleted", "columnName": "isCompleted", "affinity": "INTEGER", "notNull": true}
+        ],
+        "primaryKey": {"autoGenerate": true, "columnNames": ["id"]},
+        "indices": [
+          {"name": "index_runs_spoId", "unique": false, "columnNames": ["spoId"], "orders": [], "createSql": "CREATE INDEX IF NOT EXISTS `index_runs_spoId` ON `${TABLE_NAME}` (`spoId`)"}
+        ],
+        "foreignKeys": [
+          {"table": "spo", "onDelete": "CASCADE", "onUpdate": "NO ACTION", "columns": ["spoId"], "referencedColumns": ["id"]}
+        ]
+      },
+      {
+        "tableName": "pipes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `runId` INTEGER NOT NULL, `indexInRun` INTEGER NOT NULL, `lengthM` REAL NOT NULL, `diameterLabel` TEXT NOT NULL, FOREIGN KEY(`runId`) REFERENCES `runs`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {"fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "runId", "columnName": "runId", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "indexInRun", "columnName": "indexInRun", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "lengthM", "columnName": "lengthM", "affinity": "REAL", "notNull": true},
+          {"fieldPath": "diameterLabel", "columnName": "diameterLabel", "affinity": "TEXT", "notNull": true}
+        ],
+        "primaryKey": {"autoGenerate": true, "columnNames": ["id"]},
+        "indices": [
+          {"name": "index_pipes_runId", "unique": false, "columnNames": ["runId"], "orders": [], "createSql": "CREATE INDEX IF NOT EXISTS `index_pipes_runId` ON `${TABLE_NAME}` (`runId`)"}
+        ],
+        "foreignKeys": [
+          {"table": "runs", "onDelete": "CASCADE", "onUpdate": "NO ACTION", "columns": ["runId"], "referencedColumns": ["id"]}
+        ]
+      },
+      {
+        "tableName": "crossovers",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `runId` INTEGER NOT NULL, `afterPipeIndex` INTEGER NOT NULL, `type` INTEGER NOT NULL, `customTypeName` TEXT NOT NULL, `diameterLabel` TEXT NOT NULL, `lengthM` REAL NOT NULL, `note` TEXT NOT NULL, FOREIGN KEY(`runId`) REFERENCES `runs`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {"fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "runId", "columnName": "runId", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "afterPipeIndex", "columnName": "afterPipeIndex", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "type", "columnName": "type", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "customTypeName", "columnName": "customTypeName", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "diameterLabel", "columnName": "diameterLabel", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "lengthM", "columnName": "lengthM", "affinity": "REAL", "notNull": true},
+          {"fieldPath": "note", "columnName": "note", "affinity": "TEXT", "notNull": true}
+        ],
+        "primaryKey": {"autoGenerate": true, "columnNames": ["id"]},
+        "indices": [
+          {"name": "index_crossovers_runId", "unique": false, "columnNames": ["runId"], "orders": [], "createSql": "CREATE INDEX IF NOT EXISTS `index_crossovers_runId` ON `${TABLE_NAME}` (`runId`)"}
+        ],
+        "foreignKeys": [
+          {"table": "runs", "onDelete": "CASCADE", "onUpdate": "NO ACTION", "columns": ["runId"], "referencedColumns": ["id"]}
+        ]
+      },
+      {
+        "tableName": "bha_components",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `spoId` INTEGER NOT NULL, `indexInBha` INTEGER NOT NULL, `name` TEXT NOT NULL, `lengthM` REAL NOT NULL, `sizeLabel` TEXT NOT NULL, FOREIGN KEY(`spoId`) REFERENCES `spo`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {"fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "spoId", "columnName": "spoId", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "indexInBha", "columnName": "indexInBha", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "name", "columnName": "name", "affinity": "TEXT", "notNull": true},
+          {"fieldPath": "lengthM", "columnName": "lengthM", "affinity": "REAL", "notNull": true},
+          {"fieldPath": "sizeLabel", "columnName": "sizeLabel", "affinity": "TEXT", "notNull": true}
+        ],
+        "primaryKey": {"autoGenerate": true, "columnNames": ["id"]},
+        "indices": [
+          {"name": "index_bha_components_spoId", "unique": false, "columnNames": ["spoId"], "orders": [], "createSql": "CREATE INDEX IF NOT EXISTS `index_bha_components_spoId` ON `${TABLE_NAME}` (`spoId`)"}
+        ],
+        "foreignKeys": [
+          {"table": "spo", "onDelete": "CASCADE", "onUpdate": "NO ACTION", "columns": ["spoId"], "referencedColumns": ["id"]}
+        ]
+      },
+      {
+        "tableName": "diameter_presets",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL)",
+        "fields": [
+          {"fieldPath": "id", "columnName": "id", "affinity": "INTEGER", "notNull": true},
+          {"fieldPath": "name", "columnName": "name", "affinity": "TEXT", "notNull": true}
+        ],
+        "primaryKey": {"autoGenerate": true, "columnNames": ["id"]},
+        "indices": [],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '00000000000000000000000000000000')"
+    ]
+  }
+}

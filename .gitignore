@@ -1,0 +1,18 @@
+*.iml
+.gradle/
+.idea/
+.kotlin/
+local.properties
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.keystore
+!debug.keystore
+
+# macOS
+.DS_Store
+
+# Room schemas are intentionally committed (exportSchema = true)
