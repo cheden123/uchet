@@ -1,6 +1,5 @@
 package com.uchet.ui.measure
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +58,7 @@ import com.uchet.ui.AppViewModelProvider
 import com.uchet.ui.MainViewModel
 import com.uchet.ui.components.ConfirmDialog
 import com.uchet.ui.components.CrossoverEditorDialog
+import com.uchet.ui.components.DiameterField
 import com.uchet.ui.components.DiameterPickerDialog
 import com.uchet.ui.components.EmptyState
 import com.uchet.ui.components.SectionHeader
@@ -237,15 +237,10 @@ fun MeasureScreen(
                         .weight(1f)
                         .focusRequester(lengthFocusRequester)
                 )
-                OutlinedTextField(
+                DiameterField(
                     value = diameter,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Типоразмер") },
-                    trailingIcon = { Text("▾") },
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { showDiameterPicker = true }
+                    modifier = Modifier.weight(1f),
+                    onClick = { showDiameterPicker = true }
                 )
             }
 

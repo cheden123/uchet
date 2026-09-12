@@ -2,6 +2,7 @@ package com.uchet.ui.components
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +18,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -27,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.uchet.data.model.CrossoverTypes
@@ -102,6 +105,41 @@ fun DiameterPickerDialog(
 }
 
 /**
+ * Кликабельное поле выбора типоразмера (readOnly-заглушка, открывающая диалог).
+ * TextField в отключённом состоянии не перехватывает нажатия, поэтому клик
+ * обрабатывается обёрткой Box — в отличие от `Modifier.clickable` на самом
+ * TextField, который в Compose не срабатывает надёжно.
+ */
+@Composable
+fun DiameterField(
+    value: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.extraSmall)
+            .clickable(onClick = onClick)
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {},
+            enabled = false,
+            readOnly = true,
+            label = { Text("Типоразмер") },
+            trailingIcon = { Text("▾") },
+            colors = OutlinedTextFieldDefaults.colors(
+                disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                disabledBorderColor = MaterialTheme.colorScheme.outline,
+                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                disabledTrailingIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+/**
  * Диалог добавления/редактирования переводника/оборудования.
  * Тип: Переводник / Шаблон / Свое (для «Свое» — обязательное поле названия).
  */
@@ -167,15 +205,10 @@ fun CrossoverEditorDialog(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
+                DiameterField(
                     value = diameter,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Типоразмер") },
-                    trailingIcon = { Text("▾") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showDiameterPicker = true }
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { showDiameterPicker = true }
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
@@ -248,15 +281,10 @@ fun PipeEditorDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
+                DiameterField(
                     value = diameter,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Типоразмер") },
-                    trailingIcon = { Text("▾") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showDiameterPicker = true }
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { showDiameterPicker = true }
                 )
             }
         },
