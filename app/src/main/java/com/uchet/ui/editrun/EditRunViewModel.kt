@@ -11,7 +11,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -38,6 +40,18 @@ class EditRunViewModel(private val repo: UchetRepository) : ViewModel() {
 
     val presets: StateFlow<List<com.uchet.data.model.DiameterPreset>> = repo.observePresets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Количество труб во всех рядах СПО, созданных раньше текущего ряда (глобальный сдвиг нумерации). */
+    val globalOffset: StateFlow<Int> = run
+        .flatMapLatest { r ->
+            if (r == null) flowOf(emptyList())
+            else repo.observeRuns(r.spoId).map { runs ->
+                val idx = runs.indexOfFirst { it.id == r.id }
+                if (idx <= 0) emptyList() else runs.subList(0, idx).map { it.id }
+            }
+        }
+        .flatMapLatest { earlierRunIds -> flow { emit(repo.countPipesInRuns(earlierRunIds)) } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     fun updatePipe(pipe: PipeEntity, lengthCm: Int, diameterLabel: String) {
         viewModelScope.launch { repo.updatePipe(pipe.copy(lengthM = lengthCm / 100.0, diameterLabel = diameterLabel)) }

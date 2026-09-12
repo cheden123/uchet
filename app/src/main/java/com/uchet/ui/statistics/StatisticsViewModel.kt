@@ -48,6 +48,11 @@ class StatisticsViewModel(private val repo: UchetRepository) : ViewModel() {
         .map { it.filter { r -> r.isCompleted } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** Суммарная длина оборудования (переводников/шаблонов) всех рядов СПО. */
+    val crossoversTotal: StateFlow<Double> = crossoversFlow
+        .map { it.sumOf { c -> c.lengthM } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0.0)
+
     val allRuns: StateFlow<List<RunEntity>> = runsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 }

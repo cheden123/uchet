@@ -55,6 +55,7 @@ fun EditRunScreen(
     val crossovers by viewModel.crossovers.collectAsStateWithLifecycle()
     val run by viewModel.run.collectAsStateWithLifecycle()
     val presets by viewModel.presets.collectAsStateWithLifecycle()
+    val globalOffset by viewModel.globalOffset.collectAsStateWithLifecycle()
 
     var insertAfter by remember { mutableStateOf<Int?>(null) } // null=закрыто, -1 = в начало
     var editPipe by remember { mutableStateOf<PipeEntity?>(null) }
@@ -98,6 +99,7 @@ fun EditRunScreen(
             items(pipes, key = { "epipe_${it.id}" }) { pipe ->
                 PipeEditRow(
                     pipe = pipe,
+                    globalNumber = globalOffset + pipe.indexInRun,
                     crossover = crossovers.firstOrNull { it.afterPipeIndex == pipe.indexInRun },
                     onInsertAfter = { insertAfter = pipe.indexInRun },
                     onEdit = { editPipe = pipe },
@@ -138,7 +140,7 @@ fun EditRunScreen(
     editPipe?.let { pipe ->
         PipeEditorDialog(
             presets = presets.map { it.name },
-            title = "Труба № ${pipe.indexInRun}",
+            title = "Труба #${globalOffset + pipe.indexInRun} (№${pipe.indexInRun})",
             initialLengthCm = (pipe.lengthM * 100).toInt().toString(),
             initialDiameter = pipe.diameterLabel,
             onDismiss = { editPipe = null },
@@ -152,7 +154,7 @@ fun EditRunScreen(
     deletePipeTarget?.let { pipe ->
         ConfirmDialog(
             title = "Удалить трубу",
-            text = "Удалить трубу № ${pipe.indexInRun} (${formatMetersFull(pipe.lengthM)})? Индексы оставшихся труб будут пересчитаны.",
+            text = "Удалить трубу #${globalOffset + pipe.indexInRun} (№${pipe.indexInRun}, ${formatMetersFull(pipe.lengthM)})? Индексы оставшихся труб будут пересчитаны.",
             onConfirm = {
                 viewModel.deletePipe(pipe)
                 deletePipeTarget = null
@@ -165,6 +167,7 @@ fun EditRunScreen(
 @Composable
 private fun PipeEditRow(
     pipe: PipeEntity,
+    globalNumber: Int,
     crossover: CrossoverEntity?,
     onInsertAfter: () -> Unit,
     onEdit: () -> Unit,
@@ -183,11 +186,11 @@ private fun PipeEditRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                "${pipe.indexInRun}",
-                style = MaterialTheme.typography.titleMedium,
+                "#$globalNumber  (№${pipe.indexInRun})",
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.width(32.dp)
+                modifier = Modifier.width(116.dp)
             )
             Column(Modifier.weight(1f)) {
                 Text(

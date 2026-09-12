@@ -47,6 +47,9 @@ interface PipeDao {
     @Query("SELECT COUNT(*) FROM pipes WHERE runId = :runId")
     suspend fun countInRun(runId: Long): Int
 
+    @Query("SELECT COUNT(*) FROM pipes WHERE runId IN (:runIds)")
+    suspend fun countInRuns(runIds: List<Long>): Int
+
     @Query(
         """
         SELECT * FROM pipes

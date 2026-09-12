@@ -118,6 +118,10 @@ class UchetRepository(
 
     fun observePipesForSpo(spoId: Long): Flow<List<PipeEntity>> = pipeDao.observePipesForSpo(spoId)
 
+    /** Количество труб во всех переданных рядах (для расчёта глобального сдвига нумерации). */
+    suspend fun countPipesInRuns(runIds: List<Long>): Int =
+        if (runIds.isEmpty()) 0 else pipeDao.countInRuns(runIds)
+
     fun observeCrossoversForSpo(spoId: Long): Flow<List<CrossoverEntity>> =
         crossoverDao.observeCrossoversForSpo(spoId)
 

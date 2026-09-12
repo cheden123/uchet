@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -32,6 +33,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,6 +44,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -59,9 +63,18 @@ import com.uchet.ui.components.DiameterPickerDialog
 import com.uchet.ui.components.EmptyState
 import com.uchet.ui.components.SectionHeader
 import com.uchet.ui.components.digitsOnly
-import com.uchet.util.formatMeters
 import com.uchet.util.formatMetersFull
 import kotlinx.coroutines.launch
+
+/**
+ * Разбор ввода длины трубы: базовые метры + дробная часть (введённые цифры).
+ * Обычный режим: baseMeters = 0, ввод в сантиметрах целиком ("963" → 9.63 м).
+ * Режим "Все N": baseMeters = 8/9/10, вводятся только сантиметры ("63" → 9.63 м).
+ */
+fun parseCmInput(digits: String, baseMeters: Int = 0): Double? {
+    val value = digits.trim().toIntOrNull() ?: return null
+    return baseMeters + value / 100.0
+}
 
 @Composable
 fun MeasureScreen(
@@ -91,6 +104,7 @@ fun MeasureScreen(
     val presets by viewModel.presets.collectAsStateWithLifecycle()
     val activeRunNumber by viewModel.activeRunNumber.collectAsStateWithLifecycle()
     val lastCumulative by viewModel.lastCumulative.collectAsStateWithLifecycle()
+    val globalOffset by viewModel.globalOffset.collectAsStateWithLifecycle()
 
     if (currentSpoId == null) {
         EmptyState(
@@ -106,6 +120,9 @@ fun MeasureScreen(
 
     var lengthText by rememberSaveable { mutableStateOf("") }
     var diameter by rememberSaveable { mutableStateOf(viewModel.lastDiameterOrBlank()) }
+    // 0 = выключен, иначе базовая целая часть длины в метрах (8/9/10) для быстрого ввода.
+    var allSameBaseMeters by rememberSaveable { mutableStateOf(0) }
+    val lengthFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(presets) {
         if (diameter.isBlank() && presets.isNotEmpty()) diameter = presets.first().name
@@ -117,7 +134,29 @@ fun MeasureScreen(
     var deletePipeTarget by remember { mutableStateOf<PipeEntity?>(null) }
     var deleteCrossoverTarget by remember { mutableStateOf<CrossoverEntity?>(null) }
 
-    val lengthCm = lengthText.toIntOrNull() ?: 0
+    val parsedMeters = parseCmInput(lengthText, if (allSameBaseMeters > 0) allSameBaseMeters else 0)
+
+    fun addPipe() {
+        val meters = parseCmInput(lengthText, if (allSameBaseMeters > 0) allSameBaseMeters else 0) ?: return
+        if (diameter.isBlank()) {
+            showDiameterPicker = true
+            scope.launch { snackbarHostState.showSnackbar("Выберите типоразмер") }
+            return
+        }
+        viewModel.addPipeMeters(meters, diameter)
+        lengthText = ""
+    }
+
+    // Автодобавление в режиме "Все N": ровно 2 цифры -> труба добавляется сама.
+    LaunchedEffect(lengthText, allSameBaseMeters, diameter) {
+        if (allSameBaseMeters > 0 && lengthText.length == 2 && diameter.isNotBlank()) {
+            addPipe()
+            lengthFocusRequester.requestFocus()
+        }
+    }
+
+    // Визуальная разбивка списка труб ряда на "столбцы" по 10 (последняя — сверху).
+    val groupedPipes = remember(pipes) { pipes.reversed().chunked(10) }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -167,15 +206,51 @@ fun MeasureScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Все:", style = MaterialTheme.typography.labelMedium)
+                listOf(8, 9, 10).forEach { base ->
+                    FilterChip(
+                        selected = allSameBaseMeters == base,
+                        onClick = {
+                            allSameBaseMeters = if (allSameBaseMeters == base) 0 else base
+                            lengthText = ""
+                            lengthFocusRequester.requestFocus()
+                        },
+                        label = { Text("$base..") }
+                    )
+                }
+                if (allSameBaseMeters != 0) {
+                    TextButton(
+                        onClick = {
+                            allSameBaseMeters = 0
+                            lengthText = ""
+                        }
+                    ) { Text("Сброс") }
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedTextField(
                     value = lengthText,
-                    onValueChange = { lengthText = it.digitsOnly().take(6) },
-                    label = { Text("Длина, см") },
+                    onValueChange = { lengthText = it.digitsOnly().take(if (allSameBaseMeters > 0) 2 else 6) },
+                    label = { Text(if (allSameBaseMeters > 0) "См (${allSameBaseMeters}.xx)" else "Длина, см") },
+                    prefix = if (allSameBaseMeters > 0) {
+                        @Composable { Text("${allSameBaseMeters}.") }
+                    } else {
+                        null
+                    },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(lengthFocusRequester)
                 )
                 OutlinedTextField(
                     value = diameter,
@@ -190,16 +265,8 @@ fun MeasureScreen(
             }
 
             Button(
-                onClick = {
-                    if (diameter.isBlank()) {
-                        showDiameterPicker = true
-                        scope.launch { snackbarHostState.showSnackbar("Выберите типоразмер") }
-                    } else {
-                        viewModel.addPipe(lengthCm, diameter)
-                        lengthText = ""
-                    }
-                },
-                enabled = lengthCm > 0,
+                onClick = { addPipe() },
+                enabled = (parsedMeters ?: 0.0) > 0.0,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -210,15 +277,29 @@ fun MeasureScreen(
                     .fillMaxWidth()
                     .weight(1f)
             ) {
-                items(pipes.asReversed(), key = { "pipe_${it.id}" }) { pipe ->
-                    val crossover = crossovers.firstOrNull { it.afterPipeIndex == pipe.indexInRun }
-                    PipeRow(
-                        pipe = pipe,
-                        crossover = crossover,
-                        onAddCrossover = { crossoverAfterPipe = pipe.indexInRun },
-                        onDelete = { deletePipeTarget = pipe }
-                    )
-                    HorizontalDivider(Modifier.padding(horizontal = 12.dp))
+                groupedPipes.forEachIndexed { colIndex, chunk ->
+                    item(key = "column_header_$colIndex") {
+                        Text(
+                            "Столбец ${colIndex + 1}",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                        )
+                    }
+                    items(chunk, key = { "pipe_${it.id}" }) { pipe ->
+                        val crossover = crossovers.firstOrNull { it.afterPipeIndex == pipe.indexInRun }
+                        PipeRow(
+                            pipe = pipe,
+                            globalNumber = globalOffset + pipe.indexInRun,
+                            crossover = crossover,
+                            onAddCrossover = { crossoverAfterPipe = pipe.indexInRun },
+                            onDelete = { deletePipeTarget = pipe }
+                        )
+                        HorizontalDivider(Modifier.padding(horizontal = 12.dp))
+                    }
                 }
 
                 item(key = "crossover_section_header") {
@@ -321,7 +402,7 @@ fun MeasureScreen(
     deletePipeTarget?.let { pipe ->
         ConfirmDialog(
             title = "Удалить трубу",
-            text = "Удалить трубу № ${pipe.indexInRun} (${formatMetersFull(pipe.lengthM)})?",
+            text = "Удалить трубу #${globalOffset + pipe.indexInRun} (№${pipe.indexInRun}, ${formatMetersFull(pipe.lengthM)})?",
             onConfirm = {
                 viewModel.deletePipe(pipe)
                 deletePipeTarget = null
@@ -346,6 +427,7 @@ fun MeasureScreen(
 @Composable
 private fun PipeRow(
     pipe: PipeEntity,
+    globalNumber: Int,
     crossover: CrossoverEntity?,
     onAddCrossover: () -> Unit,
     onDelete: () -> Unit
@@ -357,12 +439,12 @@ private fun PipeRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            modifier = Modifier.width(40.dp),
-            contentAlignment = Alignment.Center
+            modifier = Modifier.width(112.dp),
+            contentAlignment = Alignment.CenterStart
         ) {
             Text(
-                "${pipe.indexInRun}",
-                style = MaterialTheme.typography.titleMedium,
+                "#$globalNumber  (№${pipe.indexInRun})",
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )

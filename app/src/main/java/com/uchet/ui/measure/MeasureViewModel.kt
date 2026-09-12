@@ -50,6 +50,15 @@ class MeasureViewModel(private val repo: UchetRepository) : ViewModel() {
         runs.indexOfFirst { it.id == activeId }.let { if (it >= 0) it + 1 else 0 }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
+    /** Количество труб во всех рядах СПО, созданных раньше активного ряда (глобальный сдвиг нумерации). */
+    val globalOffset: StateFlow<Int> =
+        combine(runs, activeRunId) { runs, activeId ->
+            val idx = runs.indexOfFirst { it.id == activeId }
+            if (idx <= 0) emptyList() else runs.subList(0, idx).map { it.id }
+        }
+            .flatMapLatest { earlierRunIds -> flow { emit(repo.countPipesInRuns(earlierRunIds)) } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
     val presets: StateFlow<List<DiameterPreset>> = repo.observePresets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -83,10 +92,11 @@ class MeasureViewModel(private val repo: UchetRepository) : ViewModel() {
         viewModelScope.launch { repo.ensureActiveRun(id) }
     }
 
-    fun addPipe(lengthCm: Int, diameterLabel: String) {
+    /** Добавить трубу, длина уже в метрах (результат parseCmInput). */
+    fun addPipeMeters(lengthM: Double, diameterLabel: String) {
         val runId = activeRunId.value ?: return
         repo.setLastDiameter(diameterLabel)
-        viewModelScope.launch { repo.addPipeToEnd(runId, lengthCm / 100.0, diameterLabel) }
+        viewModelScope.launch { repo.addPipeToEnd(runId, lengthM, diameterLabel) }
     }
 
     fun insertPipeAfter(afterIndex: Int, lengthCm: Int, diameterLabel: String) {

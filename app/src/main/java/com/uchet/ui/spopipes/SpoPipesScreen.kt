@@ -122,11 +122,11 @@ private fun PipeDetailRow(row: SpoPipeRow) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "${row.globalNumber}",
-                style = MaterialTheme.typography.titleLarge,
+                "#${row.globalNumber}  (№${row.indexInRun})",
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.width(36.dp)
+                modifier = Modifier.width(132.dp)
             )
             Column(Modifier.weight(1f)) {
                 Text(
