@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -145,13 +146,14 @@ fun MeasureScreen(
         }
         viewModel.addPipeMeters(meters, diameter)
         lengthText = ""
+        // Поле остаётся в фокусе для следующего ввода (одинаково для кнопки и галочки на клавиатуре).
+        lengthFocusRequester.requestFocus()
     }
 
     // Автодобавление в режиме "Все N": ровно 2 цифры -> труба добавляется сама.
     LaunchedEffect(lengthText, allSameBaseMeters, diameter) {
         if (allSameBaseMeters > 0 && lengthText.length == 2 && diameter.isNotBlank()) {
             addPipe()
-            lengthFocusRequester.requestFocus()
         }
     }
 
@@ -248,6 +250,7 @@ fun MeasureScreen(
                     },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { addPipe() }),
                     modifier = Modifier
                         .weight(1f)
                         .focusRequester(lengthFocusRequester)
