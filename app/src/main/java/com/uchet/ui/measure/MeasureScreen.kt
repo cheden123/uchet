@@ -32,7 +32,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -135,8 +134,6 @@ fun MeasureScreen(
     var deletePipeTarget by remember { mutableStateOf<PipeEntity?>(null) }
     var deleteCrossoverTarget by remember { mutableStateOf<CrossoverEntity?>(null) }
 
-    val parsedMeters = parseCmInput(lengthText, if (allSameBaseMeters > 0) allSameBaseMeters else 0)
-
     fun addPipe() {
         val meters = parseCmInput(lengthText, if (allSameBaseMeters > 0) allSameBaseMeters else 0) ?: return
         if (diameter.isBlank()) {
@@ -161,22 +158,7 @@ fun MeasureScreen(
     val groupedPipes = remember(pipes) { pipes.reversed().chunked(10) }
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = {
-            if (pipes.isNotEmpty()) {
-                Surface(shadowElevation = 8.dp) {
-                    Button(
-                        onClick = {
-                            viewModel.completeActiveRun()
-                            scope.launch { snackbarHostState.showSnackbar("Ряд завершён, начат следующий") }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) { Text("Завершить ряд") }
-                }
-            }
-        }
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(
             Modifier
@@ -268,12 +250,15 @@ fun MeasureScreen(
             }
 
             Button(
-                onClick = { addPipe() },
-                enabled = (parsedMeters ?: 0.0) > 0.0,
+                onClick = {
+                    viewModel.completeActiveRun()
+                    scope.launch { snackbarHostState.showSnackbar("Ряд завершён, начат следующий") }
+                },
+                enabled = pipes.isNotEmpty(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp)
-            ) { Text("Добавить трубу") }
+            ) { Text("Завершить ряд") }
 
             LazyColumn(
                 Modifier
@@ -333,7 +318,7 @@ fun MeasureScreen(
                 if (pipes.isEmpty() && crossovers.isEmpty()) {
                     item(key = "empty_hint") {
                         Text(
-                            "Введите длину трубы в сантиметрах и нажмите «Добавить трубу».",
+                            "Введите длину трубы в сантиметрах и нажмите галочку на клавиатуре.",
                             modifier = Modifier.padding(24.dp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
