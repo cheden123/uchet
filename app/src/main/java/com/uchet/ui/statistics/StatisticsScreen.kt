@@ -40,6 +40,7 @@ fun StatisticsScreen(
     LaunchedEffect(currentSpoId) { viewModel.attach(currentSpoId) }
 
     val rows by viewModel.rows.collectAsStateWithLifecycle()
+    val totals by viewModel.totals.collectAsStateWithLifecycle()
     val completedRuns by viewModel.completedRuns.collectAsStateWithLifecycle()
     val allRuns by viewModel.allRuns.collectAsStateWithLifecycle()
     val crossoversTotal by viewModel.crossoversTotal.collectAsStateWithLifecycle()
@@ -94,7 +95,7 @@ fun StatisticsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        "С учётом компоновки: ${formatMetersFull(rows.lastOrNull()?.withBha ?: 0.0)}",
+                        "С учётом компоновки: ${formatMetersFull(totals.withBha)}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }

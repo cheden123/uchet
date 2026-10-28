@@ -62,15 +62,20 @@ class MeasureViewModel(private val repo: UchetRepository) : ViewModel() {
     val presets: StateFlow<List<DiameterPreset>> = repo.observePresets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** Нарастающая длина для последней трубы активного ряда (текущая длина колонны). */
+    /**
+     * Нарастающая длина для последней трубы активного ряда (текущая длина колонны).
+     * Если труб в ряду ещё нет, точка отсчёта — начало колонны (pipeIndex = 0):
+     * тогда учитывается только оборудование перед первой трубой и компоновка.
+     */
     val lastCumulative: StateFlow<CumulativeLength?> =
         combine(_spoId, activeRun, pipes, crossovers) { spoId, run, p, c ->
             Quad(spoId, run, p, c)
         }
             .flatMapLatest { (spoId, run, p, c) ->
                 flow {
-                    if (spoId != null && run != null && p.isNotEmpty()) {
-                        emit(repo.getCumulativeLengthUpTo(spoId, run.id, p.last().indexInRun))
+                    if (spoId != null && run != null) {
+                        val pipeIndex = p.lastOrNull()?.indexInRun ?: 0
+                        emit(repo.getCumulativeLengthUpTo(spoId, run.id, pipeIndex))
                     } else {
                         emit(null)
                     }

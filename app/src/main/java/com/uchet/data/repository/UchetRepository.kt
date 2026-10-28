@@ -316,15 +316,19 @@ class UchetRepository(
 
     /**
      * Все трубы СПО в физическом порядке с накопленной длиной у каждой,
-     * посчитанной за один проход (не N+1 запросов).
+     * а также настоящие итоги по колонне (включая оборудование после самой
+     * последней трубы), посчитанные за один проход (не N+1 запросов).
      */
-    suspend fun getAllPipesInSpo(spoId: Long): List<SpoPipeRow> =
+    suspend fun getSpoRows(spoId: Long): SpoPipeRowsResult =
         buildSpoPipeRows(
             runs = runDao.getRunsForSpo(spoId),
             pipes = pipeDao.getPipesForSpo(spoId),
             crossovers = crossoverDao.getCrossoversForSpo(spoId),
             bhaComponents = bhaDao.getForSpo(spoId)
         )
+
+    /** Только построчные значения (без общих итогов). */
+    suspend fun getAllPipesInSpo(spoId: Long): List<SpoPipeRow> = getSpoRows(spoId).rows
 
     // ------------------------------------------------------------------ экспорт
 

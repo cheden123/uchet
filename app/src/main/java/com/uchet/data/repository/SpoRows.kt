@@ -8,6 +8,22 @@ import com.uchet.data.model.RunEntity
 import com.uchet.data.model.SpoPipeRow
 
 /**
+ * Результат построения сквозной таблицы труб СПО.
+ *
+ * [rows] — построчные значения «по состоянию на эту трубу» (оборудование,
+ * стоящее ПОСЛЕ трубы, в её строку не входит). Итоги же считаются по всей
+ * колонне, включая оборудование после самой последней трубы — поэтому брать
+ * общую длину из `rows.lastOrNull()` нельзя.
+ */
+data class SpoPipeRowsResult(
+    val rows: List<SpoPipeRow>,
+    /** Трубы + всё оборудование СПО, без компоновки. */
+    val totalPipesOnly: Double,
+    /** То же + суммарная длина компоновки (BHA). */
+    val totalWithBha: Double
+)
+
+/**
  * Чистая функция: строит сквозную таблицу труб СПО за один проход.
  * Используется и репозиторием (для экспорта), и ViewModel'ами (реактивно),
  * чтобы логика накопления длины была в одном месте.
@@ -20,7 +36,7 @@ fun buildSpoPipeRows(
     pipes: List<PipeEntity>,
     crossovers: List<CrossoverEntity>,
     bhaComponents: List<BhaComponentEntity>
-): List<SpoPipeRow> {
+): SpoPipeRowsResult {
     val bhaTotal = bhaComponents.sumOf { it.lengthM }
     val pipesByRun = pipes.groupBy { it.runId }
     val crossoversByRun = crossovers.groupBy { it.runId }
@@ -55,8 +71,17 @@ fun buildSpoPipeRows(
                 pipesOnly = cumulative,
                 withBha = cumulative + bhaTotal
             )
+            // Оборудование после этой трубы учитывается в накоплении, но в её
+            // строку не попадает — оно относится к точке сразу за трубой.
             cumulative += xo.sumOf { it.lengthM }
         }
     }
-    return rows
+
+    // cumulative уже включает хвостовое оборудование после последней трубы,
+    // даже если следующей трубы нет — именно это значение и есть итог колонны.
+    return SpoPipeRowsResult(
+        rows = rows,
+        totalPipesOnly = cumulative,
+        totalWithBha = cumulative + bhaTotal
+    )
 }
