@@ -90,14 +90,21 @@ abstract class AppDatabase : RoomDatabase() {
                 INSTANCE ?: build(context).also { INSTANCE = it }
             }
 
-        private fun build(context: Context): AppDatabase =
-            Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, DB_NAME)
+        private fun build(context: Context): AppDatabase {
+            // Сначала сохраняем копию базы версий 1–6 — ниже Room сотрёт её без миграции.
+            LegacyDbGuard.preserveIfLegacy(
+                dbFile = context.getDatabasePath(DB_NAME),
+                backupDir = java.io.File(context.filesDir, LegacyDbGuard.BACKUP_DIR)
+            )
+            return Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, DB_NAME)
                 .addMigrations(*MIGRATIONS)
-                // Старые версии (1..6) без ценных данных можно стереть. Безусловный
-                // fallbackToDestructiveMigration() НЕ используется: начиная с версии 7
-                // любое изменение схемы обязано сопровождаться Migration, иначе падение.
-                .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6)
+                // Старые версии (1..6) пересоздаются пустыми (схем для миграции нет),
+                // но их копия уже лежит в filesDir/legacy_backup (LegacyDbGuard).
+                // Безусловный fallbackToDestructiveMigration() НЕ используется: начиная
+                // с версии 7 любое изменение схемы обязано сопровождаться Migration.
+                .fallbackToDestructiveMigrationFrom(*LegacyDbGuard.LEGACY_VERSIONS)
                 .addCallback(seedCallback)
                 .build()
+        }
     }
 }

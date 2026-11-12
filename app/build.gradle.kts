@@ -74,6 +74,13 @@ android {
     }
 }
 
+// Unit-тесты гоняем только в debug: там лежат схемы Room (ассеты) для MigrationTest,
+// а release-вариант запускал бы тот же код (R8 к unit-тестам не применяется) и падал
+// бы без схем. Так `./gradlew test` = testDebugUnitTest.
+tasks.matching { it.name == "testReleaseUnitTest" }.configureEach {
+    enabled = false
+}
+
 // Room: export schemas (must be committed to VCS).
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")

@@ -7,6 +7,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import com.uchet.data.db.AppDatabase
+import com.uchet.data.db.LegacyDbGuard
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.IOException
@@ -62,6 +63,13 @@ fun SettingsScreen(
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // Только основные .db (рядом может лежать «-wal»), новые сверху.
+    val legacyBackups = remember {
+        File(context.filesDir, LegacyDbGuard.BACKUP_DIR)
+            .listFiles { f -> f.isFile && f.name.endsWith(".db") }
+            ?.sortedByDescending { it.name }
+            .orEmpty()
+    }
 
     var newName by rememberSaveable { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<DiameterPreset?>(null) }
@@ -153,6 +161,33 @@ fun SettingsScreen(
                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                     color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+
+            // Копии базы старой версии, сохранённые перед обновлением (LegacyDbGuard).
+            if (legacyBackups.isNotEmpty()) {
+                item { SectionHeader("Данные старой версии") }
+                item {
+                    Text(
+                        "При обновлении найдена база старой версии. Её данные не перенесены, " +
+                            "но сохранены в файл — отправьте его разработчику для переноса.",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                items(legacyBackups, key = { "legacy_${it.name}" }) { file ->
+                    Button(
+                        onClick = {
+                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "application/octet-stream"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(send, "Старая база"))
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Отправить ${file.name}") }
+                }
             }
         }
     }
