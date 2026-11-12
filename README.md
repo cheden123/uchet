@@ -99,6 +99,30 @@ app/src/main/java/com/uchet/
 - `MIGRATION_7_8` — приёмка п.7: версия поднята с 7 до 8, в `spo` добавлено тестовое
   поле `testField TEXT NOT NULL DEFAULT ''`. Установка новой сборки поверх существующей
   базы с данными сохраняет все СПО/ряды/трубы.
+- Миграция проверяется тестом `MigrationTest` (Robolectric + `room-testing`, без
+  эмулятора). Схема `7.json` восстановлена по `8.json` минус `spo.testField` —
+  настоящая схема 7 в репозитории не сохранилась. Схемы подключены ассетами только
+  в debug-сборку (`sourceSets.debug.assets`).
+- **Внимание:** обновление с версий 1–6 стирает данные (`fallbackToDestructiveMigrationFrom`).
+  Миграций 6→7 нет — схемы 6/7 не сохранились.
+
+## Тесты
+
+```bash
+./gradlew testDebugUnitTest
+```
+
+- `SpoRowsTest` — итог длины СПО (оборудование после последней трубы и т.п.).
+- `MigrationTest` — миграция 7→8 с сохранением данных, несколько незавершённых СПО.
+
+На Windows с кириллицей в профиле (`C:\Users\Денис`) тестовый JVM-процесс Gradle
+не стартует (`ClassNotFoundException: GradleWorkerMain`). Обход — указать
+`GRADLE_USER_HOME` на ASCII-путь (например, junction на `%USERPROFILE%\.gradle`):
+
+```powershell
+New-Item -ItemType Junction -Path C:\gradle-home -Target "$env:USERPROFILE\.gradle"
+$env:GRADLE_USER_HOME = 'C:\gradle-home'
+```
 
 ## Экспорт в Excel
 

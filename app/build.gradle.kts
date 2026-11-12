@@ -49,6 +49,17 @@ android {
         kotlinCompilerExtensionVersion = "1.5.14"
     }
 
+    // Robolectric: тестам нужны ресурсы/ассеты приложения.
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+
+    // Схемы Room — ассеты для MigrationTestHelper. Только debug-сборка
+    // (в неё же идут unit-тесты), в release-APK схемы не попадают.
+    sourceSets {
+        getByName("debug").assets.srcDir("$projectDir/schemas")
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -99,4 +110,9 @@ dependencies {
 
     // Юнит-тесты чистой логики (buildSpoPipeRows и т.п.) — запускаются `./gradlew test`.
     testImplementation("junit:junit:4.13.2")
+    // Тест миграций Room на JVM (Robolectric) — без эмулятора/устройства.
+    testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("androidx.room:room-testing:2.6.1")
+    testImplementation("androidx.test:core-ktx:1.6.1")
+    testImplementation("androidx.test.ext:junit-ktx:1.2.1")
 }
