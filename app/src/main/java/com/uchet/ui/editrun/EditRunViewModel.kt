@@ -61,9 +61,16 @@ class EditRunViewModel(private val repo: UchetRepository) : ViewModel() {
         viewModelScope.launch { repo.deletePipe(pipe) }
     }
 
+    /**
+     * Вставка после трубы [afterIndex]; -1 («в начало ряда» из экрана) -> 0.
+     * Раньше -1 уходило в insertPipeAt как есть: новая труба получала indexInRun = 0,
+     * а оборудование «перед первой трубой» (afterPipeIndex = 0) сдвигалось на 1.
+     */
     fun insertAfter(afterIndex: Int, lengthCm: Int, diameterLabel: String) {
         val id = _runId.value ?: return
-        viewModelScope.launch { repo.insertPipeAt(id, afterIndex, lengthCm / 100.0, diameterLabel) }
+        viewModelScope.launch {
+            repo.insertPipeAt(id, afterIndex.coerceAtLeast(0), lengthCm / 100.0, diameterLabel)
+        }
     }
 
     fun addCrossover(

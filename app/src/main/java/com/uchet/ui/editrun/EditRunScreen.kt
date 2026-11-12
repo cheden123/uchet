@@ -42,6 +42,7 @@ import com.uchet.ui.AppViewModelProvider
 import com.uchet.ui.components.ConfirmDialog
 import com.uchet.ui.components.PipeEditorDialog
 import com.uchet.util.formatMetersFull
+import kotlin.math.roundToInt
 
 @Composable
 fun EditRunScreen(
@@ -127,7 +128,8 @@ fun EditRunScreen(
     insertAfter?.let { after ->
         PipeEditorDialog(
             presets = presets.map { it.name },
-            title = if (after < 0) "Вставить трубу в начало" else "Вставить трубу после № ${after + 1}",
+            // indexInRun 1-based: подпись — сам номер трубы (раньше было +1).
+            title = if (after < 0) "Вставить трубу в начало" else "Вставить трубу после № $after",
             initialDiameter = presets.firstOrNull()?.name ?: "",
             onDismiss = { insertAfter = null },
             onSave = { cm, dia ->
@@ -141,7 +143,8 @@ fun EditRunScreen(
         PipeEditorDialog(
             presets = presets.map { it.name },
             title = "Труба #${globalOffset + pipe.indexInRun} (№${pipe.indexInRun})",
-            initialLengthCm = (pipe.lengthM * 100).toInt().toString(),
+            // roundToInt, а не toInt: 9.57 * 100 = 956.99… -> иначе труба теряла 1 см при сохранении.
+            initialLengthCm = (pipe.lengthM * 100).roundToInt().toString(),
             initialDiameter = pipe.diameterLabel,
             onDismiss = { editPipe = null },
             onSave = { cm, dia ->

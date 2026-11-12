@@ -65,6 +65,7 @@ import com.uchet.ui.components.SectionHeader
 import com.uchet.ui.components.digitsOnly
 import com.uchet.util.formatMetersFull
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * Разбор ввода длины трубы: базовые метры + дробная часть (введённые цифры).
@@ -341,7 +342,8 @@ fun MeasureScreen(
     crossoverAfterPipe?.let { afterIndex ->
         CrossoverEditorDialog(
             presets = presets.map { it.name },
-            afterPipeLabel = if (afterIndex < 0) "Перед первой трубой ряда" else "После трубы № ${afterIndex + 1}",
+            // indexInRun 1-based: подпись — сам номер трубы (раньше было +1, сдвиг на одну трубу).
+            afterPipeLabel = if (afterIndex < 0) "Перед первой трубой ряда" else "После трубы № $afterIndex",
             onDismiss = { crossoverAfterPipe = null },
             onSave = { type, customName, dia, cm, note ->
                 viewModel.addCrossover(
@@ -360,7 +362,7 @@ fun MeasureScreen(
     editingCrossover?.let { c ->
         CrossoverEditorDialog(
             presets = presets.map { it.name },
-            afterPipeLabel = if (c.afterPipeIndex == 0) "Перед первой трубой ряда" else "После трубы № ${c.afterPipeIndex + 1}",
+            afterPipeLabel = if (c.afterPipeIndex == 0) "Перед первой трубой ряда" else "После трубы № ${c.afterPipeIndex}",
             existingType = c.type,
             existingCustomName = c.customTypeName,
             existingDiameter = c.diameterLabel,
@@ -508,4 +510,5 @@ private fun CrossoverRow(
     }
 }
 
-private fun formatCm(m: Double): String = (m * 100).toInt().toString()
+/** Метры -> сантиметры строкой. roundToInt, а не toInt: 9.57 * 100 = 956.99… -> 957. */
+private fun formatCm(m: Double): String = (m * 100).roundToInt().toString()
