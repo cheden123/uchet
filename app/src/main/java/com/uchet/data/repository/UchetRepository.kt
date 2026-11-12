@@ -17,7 +17,9 @@ import com.uchet.data.model.PipeEntity
 import com.uchet.data.model.RunEntity
 import com.uchet.data.model.SpoEntity
 import com.uchet.data.model.SpoPipeRow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -451,6 +453,19 @@ class UchetRepository(
         lengthM = c.lengthM,
         note = c.note.ifBlank { "Ряд $runNumber" }
     )
+
+    // ------------------------------------------------------------------ резервная копия
+
+    /**
+     * Переносит журнал WAL в основной файл БД (PRAGMA wal_checkpoint(FULL)), чтобы
+     * копия uchet.db содержала все данные. true — перенесено полностью (busy = 0);
+     * false — БД занята другой операцией, копировать сейчас нельзя.
+     */
+    suspend fun checkpointDatabase(): Boolean = withContext(Dispatchers.IO) {
+        db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)").use { c ->
+            c.moveToFirst() && c.getInt(0) == 0
+        }
+    }
 
     companion object {
         private const val KEY_CURRENT_SPO = "current_spo_id"

@@ -1,6 +1,15 @@
 package com.uchet.ui.settings
 
+import android.content.Intent
+import android.database.SQLException
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
+import com.uchet.data.db.AppDatabase
+import kotlinx.coroutines.launch
+import java.io.File
+import java.io.IOException
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -50,6 +59,9 @@ fun SettingsScreen(
             viewModel.clearError()
         }
     }
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var newName by rememberSaveable { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<DiameterPreset?>(null) }
@@ -106,6 +118,41 @@ fun SettingsScreen(
                         }
                     }
                 }
+            }
+
+            item { SectionHeader("Резервная копия") }
+            item {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            try {
+                                val file = viewModel.createBackup(
+                                    dbFile = context.getDatabasePath(AppDatabase.DB_NAME),
+                                    outDir = File(context.cacheDir, "exports") // путь из file_paths.xml
+                                )
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = "application/octet-stream"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(send, "Резервная копия базы"))
+                            } catch (e: IOException) {
+                                snackbar.showSnackbar("Не удалось создать копию: ${e.message}")
+                            } catch (e: SQLException) {
+                                snackbar.showSnackbar("Ошибка базы при копировании: ${e.message}")
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Сохранить копию базы (.db)") }
+            }
+            item {
+                Text(
+                    "Вся база (все СПО) одним файлом uchet_backup_….db — отправьте себе в мессенджер или на почту.",
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
