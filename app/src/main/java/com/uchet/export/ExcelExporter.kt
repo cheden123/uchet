@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.uchet.data.model.ExportData
+import com.uchet.data.model.SpoEntity
 import com.uchet.data.model.SpoPipeRow
 import com.uchet.util.formatDate
 import com.uchet.util.formatMeters
@@ -47,16 +48,7 @@ class ExcelExporter(private val context: Context) {
     fun shareUri(file: File): Uri =
         FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 
-    private fun buildFileName(data: ExportData): String {
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(data.spo.startDate))
-        val title = sanitize(data.spo.title.ifBlank { "СПО" })
-        return "${date}_${title}.xlsx"
-    }
-
-    private fun sanitize(raw: String): String {
-        val cleaned = raw.replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_").trim('_', '.', ' ')
-        return cleaned.ifBlank { "SPO" }
-    }
+    private fun buildFileName(data: ExportData): String = exportFileName(data.spo)
 
     private fun write(data: ExportData, file: File) {
         XSSFWorkbook().use { wb ->
@@ -273,14 +265,38 @@ class ExcelExporter(private val context: Context) {
         cell.cellStyle = style
     }
 
-    private companion object {
-        const val LEFT = 0
-        const val RIGHT = 6
-        const val PIPES_PER_COLUMN = 50
-        const val PIPES_PER_PAGE = 100
-        const val GROUP_SIZE = 10
+    companion object {
+        /**
+         * Имя файла одной СПО: дата_скв№_название_idN.xlsx.
+         * id СПО гарантирует уникальность: две СПО с одинаковыми датой и названием
+         * (раньше имя было только «дата_название») больше не перезаписывают друг друга.
+         */
+        fun exportFileName(spo: SpoEntity): String {
+            val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(spo.startDate))
+            val title = sanitize(spo.title.ifBlank { "СПО" })
+            val well = sanitize(spo.wellNumber).takeIf { spo.wellNumber.isNotBlank() }
+            return buildString {
+                append(date)
+                if (well != null) append("_скв").append(well)
+                append('_').append(title)
+                append("_id").append(spo.id)
+                append(".xlsx")
+            }
+        }
 
-        val TABLE_HEADERS = listOf(
+        /** Заменяет недопустимые для имени файла символы и пробелы на «_». */
+        private fun sanitize(raw: String): String {
+            val cleaned = raw.replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_").trim('_', '.', ' ')
+            return cleaned.ifBlank { "SPO" }
+        }
+
+        private const val LEFT = 0
+        private const val RIGHT = 6
+        private const val PIPES_PER_COLUMN = 50
+        private const val PIPES_PER_PAGE = 100
+        private const val GROUP_SIZE = 10
+
+        private val TABLE_HEADERS = listOf(
             "№ п/п",
             "Диаметр/Толщина стенки НКТ",
             "Марка стали",
