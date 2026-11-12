@@ -28,7 +28,7 @@ import com.uchet.data.model.SpoEntity
         BhaComponentEntity::class,
         DiameterPreset::class
     ],
-    version = 8,
+    version = AppDatabase.VERSION,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -42,6 +42,9 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         const val DB_NAME = "uchet.db"
+
+        /** Версия схемы; нужна и при загрузке чужого файла базы (DbImport). */
+        const val VERSION = 8
 
         val DEFAULT_PRESETS = listOf(
             "НКТ 60", "НКТ 73", "НКТ 89", "НКТ 102", "НКТ 114",
@@ -89,6 +92,15 @@ abstract class AppDatabase : RoomDatabase() {
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: build(context).also { INSTANCE = it }
             }
+
+        /**
+         * Закрыть базу перед заменой файла (загрузка базы из файла). После этого
+         * приложение перезапускается — старые ссылки на базу в ViewModel'ях не живут.
+         */
+        fun closeInstance() = synchronized(this) {
+            INSTANCE?.close()
+            INSTANCE = null
+        }
 
         private fun build(context: Context): AppDatabase {
             // Сначала сохраняем копию базы версий 1–6 — ниже Room сотрёт её без миграции.
