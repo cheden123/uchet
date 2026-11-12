@@ -1,7 +1,7 @@
 # Сборка APK на GitHub: при каждом push / PR и вручную (вкладка Actions → Run workflow).
 # Готовый APK — в разделе Artifacts у запуска (хранится 30 дней).
 #
-# Обновление из программы: при push в рабочую ветку создаётся релиз "build-<номер>"
+# Обновление из программы: при push (или ручном запуске) в рабочей ветке создаётся релиз "build-<номер>"
 # с APK — приложение находит его в «Настройки → Обновление». Релиз делается, только
 # если задан секрет UCHET_KEYSTORE_B64 (ключ подписи в base64): APK, подписанный
 # случайным ключом GitHub, не встанет поверх установленного приложения.
@@ -68,7 +68,7 @@ jobs:
 
       - name: Релиз для обновления из программы
         if: >-
-          github.event_name == 'push' && env.UCHET_KEYSTORE_FILE != '' &&
+          github.event_name != 'pull_request' && env.UCHET_KEYSTORE_FILE != '' &&
           (github.ref == 'refs/heads/arena/01a08f9c-uchet' || github.ref == 'refs/heads/main')
         env:
           GH_TOKEN: ${{ github.token }}
