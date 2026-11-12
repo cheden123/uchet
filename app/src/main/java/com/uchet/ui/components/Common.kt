@@ -23,6 +23,27 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import kotlinx.coroutines.withTimeoutOrNull
+
+/** Сколько висит snackbar «Отменить» после удаления. */
+const val UNDO_TIMEOUT_MS = 5_000L
+
+/**
+ * Snackbar с кнопкой «Отменить» ровно на [timeoutMs] (в Material3 Short = 4 с, Long = 10 с,
+ * поэтому Indefinite + таймаут; отмена корутины по таймауту убирает snackbar).
+ * Предыдущий snackbar закрывается, чтобы отмена относилась к последнему удалению.
+ * @return true, если нажали «Отменить».
+ */
+suspend fun SnackbarHostState.showUndo(message: String, timeoutMs: Long = UNDO_TIMEOUT_MS): Boolean {
+    currentSnackbarData?.dismiss()
+    val result = withTimeoutOrNull(timeoutMs) {
+        showSnackbar(message, actionLabel = "Отменить", duration = SnackbarDuration.Indefinite)
+    }
+    return result == SnackbarResult.ActionPerformed
+}
 
 /** Заглушка-состояние с сообщением и опциональной кнопкой. */
 @Composable

@@ -1,6 +1,10 @@
 package com.uchet.ui.editrun
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,7 +45,11 @@ import com.uchet.data.model.PipeEntity
 import com.uchet.ui.AppViewModelProvider
 import com.uchet.ui.components.ConfirmDialog
 import com.uchet.ui.components.PipeEditorDialog
+import com.uchet.ui.components.showUndo
 import com.uchet.util.formatMetersFull
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @Composable
@@ -61,68 +69,74 @@ fun EditRunScreen(
     var insertAfter by remember { mutableStateOf<Int?>(null) } // null=закрыто, -1 = в начало
     var editPipe by remember { mutableStateOf<PipeEntity?>(null) }
     var deletePipeTarget by remember { mutableStateOf<PipeEntity?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
-            }
-            Text(
-                "Ряд № — " + if (run?.isCompleted == true) "завершён" else "активный",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        LazyColumn(
-            Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-        ) {
-            item(key = "insert_start") {
-                OutlinedButton(
-                    onClick = { insertAfter = -1 },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Filled.Add, null, Modifier.width(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Вставить трубу в начало ряда")
+    // Box — чтобы показать snackbar «Отменить» поверх списка (у экрана нет своего Scaffold).
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
                 }
-                Spacer(Modifier.padding(4.dp))
-            }
-
-            items(pipes, key = { "epipe_${it.id}" }) { pipe ->
-                PipeEditRow(
-                    pipe = pipe,
-                    globalNumber = globalOffset + pipe.indexInRun,
-                    crossover = crossovers.firstOrNull { it.afterPipeIndex == pipe.indexInRun },
-                    onInsertAfter = { insertAfter = pipe.indexInRun },
-                    onEdit = { editPipe = pipe },
-                    onDelete = { deletePipeTarget = pipe }
+                Text(
+                    "Ряд № — " + if (run?.isCompleted == true) "завершён" else "активный",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
                 )
-                HorizontalDivider(Modifier.padding(vertical = 2.dp))
             }
 
-            if (crossovers.isNotEmpty()) {
-                item(key = "eq_header") {
-                    Text(
-                        "Оборудование ряда",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
-                    )
+            LazyColumn(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                item(key = "insert_start") {
+                    OutlinedButton(
+                        onClick = { insertAfter = -1 },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.Add, null, Modifier.width(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Вставить трубу в начало ряда")
+                    }
+                    Spacer(Modifier.padding(4.dp))
                 }
-                items(crossovers, key = { "ecross_${it.id}" }) { c ->
-                    EquipmentInfoRow(c)
+
+                items(pipes, key = { "epipe_${it.id}" }) { pipe ->
+                    PipeEditRow(
+                        pipe = pipe,
+                        globalNumber = globalOffset + pipe.indexInRun,
+                        crossover = crossovers.firstOrNull { it.afterPipeIndex == pipe.indexInRun },
+                        onInsertAfter = { insertAfter = pipe.indexInRun },
+                        onEdit = { editPipe = pipe },
+                        onDelete = { deletePipeTarget = pipe }
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 2.dp))
+                }
+
+                if (crossovers.isNotEmpty()) {
+                    item(key = "eq_header") {
+                        Text(
+                            "Оборудование ряда",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+                        )
+                    }
+                    items(crossovers, key = { "ecross_${it.id}" }) { c ->
+                        EquipmentInfoRow(c)
+                    }
                 }
             }
         }
+        SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter))
     }
 
     insertAfter?.let { after ->
@@ -159,8 +173,16 @@ fun EditRunScreen(
             title = "Удалить трубу",
             text = "Удалить трубу #${globalOffset + pipe.indexInRun} (№${pipe.indexInRun}, ${formatMetersFull(pipe.lengthM)})? Индексы оставшихся труб будут пересчитаны.",
             onConfirm = {
-                viewModel.deletePipe(pipe)
                 deletePipeTarget = null
+                scope.launch {
+                    // Само удаление не прерываем, даже если экран закроют в этот момент.
+                    val deleted = withContext(NonCancellable) { viewModel.deletePipe(pipe) }
+                    if (snackbarHostState.showUndo("Труба №${pipe.indexInRun} удалена") &&
+                        !viewModel.restorePipe(deleted)
+                    ) {
+                        snackbarHostState.showSnackbar("Не удалось восстановить трубу")
+                    }
+                }
             },
             onDismiss = { deletePipeTarget = null }
         )

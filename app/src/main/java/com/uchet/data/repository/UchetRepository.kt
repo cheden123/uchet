@@ -7,6 +7,8 @@ import com.uchet.data.model.BhaComponentEntity
 import com.uchet.data.model.CrossoverEntity
 import com.uchet.data.model.CrossoverTypes
 import com.uchet.data.model.CumulativeLength
+import com.uchet.data.model.DeletedPipe
+import com.uchet.data.model.DeletedSpo
 import com.uchet.data.model.DiameterPreset
 import com.uchet.data.model.ExportData
 import com.uchet.data.model.ExportDiameterRow
@@ -88,9 +90,42 @@ class UchetRepository(
         spoDao.getById(id)?.let { spoDao.update(it.copy(isCompleted = completed)) }
     }
 
-    suspend fun deleteSpo(spo: SpoEntity) {
-        if (currentSpoId() == spo.id) clearCurrentSpoId()
-        spoDao.delete(spo)
+    /**
+     * Удаляет СПО (каскадом — ряды, трубы, оборудование, компоновку) и возвращает
+     * снимок всех её данных для отмены удаления ([restoreSpo]).
+     */
+    suspend fun deleteSpo(spo: SpoEntity): DeletedSpo {
+        val wasCurrent = currentSpoId() == spo.id
+        val snapshot = db.withTransaction {
+            val s = DeletedSpo(
+                spo = spoDao.getById(spo.id) ?: spo,
+                runs = runDao.getRunsForSpo(spo.id),
+                pipes = pipeDao.getPipesForSpo(spo.id),
+                crossovers = crossoverDao.getCrossoversForSpo(spo.id),
+                bha = bhaDao.getForSpo(spo.id),
+                wasCurrent = wasCurrent
+            )
+            spoDao.delete(spo)
+            s
+        }
+        if (wasCurrent) clearCurrentSpoId()
+        return snapshot
+    }
+
+    /**
+     * Восстанавливает удалённую СПО с исходными id (порядок вставки — по внешним
+     * ключам: СПО -> ряды -> трубы/оборудование, компоновка). Если СПО была текущей
+     * и другая ещё не выбрана — снова делает её текущей.
+     */
+    suspend fun restoreSpo(d: DeletedSpo) {
+        db.withTransaction {
+            spoDao.insert(d.spo)
+            d.runs.forEach { runDao.insert(it) }
+            d.pipes.forEach { pipeDao.insert(it) }
+            d.crossovers.forEach { crossoverDao.insert(it) }
+            d.bha.forEach { bhaDao.insert(it) }
+        }
+        if (d.wasCurrent && currentSpoId() == null) setCurrentSpoId(d.spo.id)
     }
 
     // ------------------------------------------------------------------ ряды
@@ -191,7 +226,7 @@ class UchetRepository(
      * после удаляемой трубы, переезжает на предыдущую трубу (он физически
      * остаётся в том же месте колонны).
      */
-    suspend fun deletePipe(pipe: PipeEntity) = db.withTransaction {
+    suspend fun deletePipe(pipe: PipeEntity): DeletedPipe = db.withTransaction {
         pipeDao.deleteById(pipe.id)
         pipeDao.shiftIndicesAfter(pipe.runId, pipe.indexInRun, -1)
         val anchored = crossoverDao.getAnchoredAt(pipe.runId, pipe.indexInRun)
@@ -199,6 +234,25 @@ class UchetRepository(
             crossoverDao.update(c.copy(afterPipeIndex = (pipe.indexInRun - 1).coerceAtLeast(0)))
         }
         crossoverDao.shiftIndicesAfter(pipe.runId, pipe.indexInRun, -1)
+        // Снимок для отмены: сама труба + какое оборудование стояло после неё.
+        DeletedPipe(pipe, anchored.map { it.id })
+    }
+
+    /**
+     * Отмена [deletePipe] — обратные операции в одной транзакции:
+     * сдвиг труб и оборудования после (index-1) на +1, вставка трубы с исходным id
+     * на исходный indexInRun, возврат «перевешенного» оборудования на эту трубу.
+     * Оборудование, стоявшее после предыдущей трубы (index-1) до удаления, остаётся там.
+     */
+    suspend fun restorePipe(d: DeletedPipe) = db.withTransaction {
+        val p = d.pipe
+        pipeDao.shiftIndicesAfter(p.runId, p.indexInRun - 1, +1)
+        crossoverDao.shiftIndicesAfter(p.runId, p.indexInRun - 1, +1)
+        pipeDao.insert(p)
+        val anchoredIds = d.anchoredCrossoverIds.toSet()
+        for (c in crossoverDao.getCrossoversForRun(p.runId)) {
+            if (c.id in anchoredIds) crossoverDao.update(c.copy(afterPipeIndex = p.indexInRun))
+        }
     }
 
     // ------------------------------------------------------------------ переводники/оборудование

@@ -66,7 +66,10 @@ import com.uchet.ui.components.digitsOnly
 import com.uchet.util.MAX_REASONABLE_PIPE_M
 import com.uchet.util.formatMetersFull
 import com.uchet.util.parseCmInput
+import com.uchet.ui.components.showUndo
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @Composable
@@ -388,8 +391,16 @@ fun MeasureScreen(
             title = "Удалить трубу",
             text = "Удалить трубу #${globalOffset + pipe.indexInRun} (№${pipe.indexInRun}, ${formatMetersFull(pipe.lengthM)})?",
             onConfirm = {
-                viewModel.deletePipe(pipe)
                 deletePipeTarget = null
+                scope.launch {
+                    // Само удаление не прерываем, даже если экран закроют в этот момент.
+                    val deleted = withContext(NonCancellable) { viewModel.deletePipe(pipe) }
+                    if (snackbarHostState.showUndo("Труба №${pipe.indexInRun} удалена") &&
+                        !viewModel.restorePipe(deleted)
+                    ) {
+                        snackbarHostState.showSnackbar("Не удалось восстановить трубу")
+                    }
+                }
             },
             onDismiss = { deletePipeTarget = null }
         )

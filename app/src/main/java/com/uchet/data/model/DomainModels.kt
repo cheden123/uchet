@@ -26,6 +26,22 @@ data class SpoPipeRow(
     val withBha: Double
 )
 
+/** Снимок удалённой трубы для отмены удаления: труба + id оборудования, стоявшего после неё. */
+data class DeletedPipe(
+    val pipe: PipeEntity,
+    val anchoredCrossoverIds: List<Long>
+)
+
+/** Снимок удалённой СПО со всеми данными для отмены удаления. */
+data class DeletedSpo(
+    val spo: SpoEntity,
+    val runs: List<RunEntity>,
+    val pipes: List<PipeEntity>,
+    val crossovers: List<CrossoverEntity>,
+    val bha: List<BhaComponentEntity>,
+    val wasCurrent: Boolean
+)
+
 /** Строка таблицы «Оборудование» в экспорте. */
 data class ExportEquipment(
     val number: Int,

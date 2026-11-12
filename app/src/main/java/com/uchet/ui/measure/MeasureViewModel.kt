@@ -3,7 +3,9 @@ package com.uchet.ui.measure
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.uchet.data.model.CrossoverEntity
+import android.database.SQLException
 import com.uchet.data.model.CumulativeLength
+import com.uchet.data.model.DeletedPipe
 import com.uchet.data.model.DiameterPreset
 import com.uchet.data.model.PipeEntity
 import com.uchet.data.model.RunEntity
@@ -120,8 +122,15 @@ class MeasureViewModel(private val repo: UchetRepository) : ViewModel() {
         viewModelScope.launch { repo.updatePipe(pipe.copy(lengthM = lengthCm / 100.0, diameterLabel = diameterLabel)) }
     }
 
-    fun deletePipe(pipe: PipeEntity) {
-        viewModelScope.launch { repo.deletePipe(pipe) }
+    /** Удаляет трубу; снимок — для отмены через [restorePipe]. */
+    suspend fun deletePipe(pipe: PipeEntity): DeletedPipe = repo.deletePipe(pipe)
+
+    /** false — восстановить не удалось (например, ряд/СПО уже удалены — нарушение внешнего ключа). */
+    suspend fun restorePipe(d: DeletedPipe): Boolean = try {
+        repo.restorePipe(d)
+        true
+    } catch (e: SQLException) {
+        false
     }
 
     fun completeActiveRun() {
