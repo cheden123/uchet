@@ -57,6 +57,13 @@ class UchetRepository(
         prefs.edit().putString(KEY_LAST_DIAMETER, label).apply()
     }
 
+    /** Своё значение «Все N» (целые метры), 0 — не задано. */
+    fun customAllSameBase(): Int = prefs.getInt(KEY_CUSTOM_ALL_SAME, 0)
+
+    fun setCustomAllSameBase(meters: Int) {
+        prefs.edit().putInt(KEY_CUSTOM_ALL_SAME, meters).apply()
+    }
+
     // ------------------------------------------------------------------ СПО
 
     fun observeSpos(): Flow<List<SpoEntity>> = spoDao.observeAll()
@@ -470,6 +477,7 @@ class UchetRepository(
     companion object {
         private const val KEY_CURRENT_SPO = "current_spo_id"
         private const val KEY_LAST_DIAMETER = "last_diameter"
+        private const val KEY_CUSTOM_ALL_SAME = "custom_all_same_base"
         private const val NO_SPO = -1L
     }
 }

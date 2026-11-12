@@ -63,9 +63,14 @@ import com.uchet.ui.components.DiameterPickerDialog
 import com.uchet.ui.components.EmptyState
 import com.uchet.ui.components.SectionHeader
 import com.uchet.ui.components.digitsOnly
+import com.uchet.util.ALL_SAME_BASE_RANGE
 import com.uchet.util.MAX_REASONABLE_PIPE_M
 import com.uchet.util.formatMetersFull
+import com.uchet.util.isCompleteCmInput
 import com.uchet.util.parseCmInput
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.AlertDialog
 import com.uchet.ui.components.showUndo
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
@@ -118,6 +123,9 @@ fun MeasureScreen(
     var diameter by rememberSaveable { mutableStateOf(viewModel.lastDiameterOrBlank()) }
     // 0 = выключен, иначе базовая целая часть длины в метрах (8/9/10) для быстрого ввода.
     var allSameBaseMeters by rememberSaveable { mutableStateOf(0) }
+    // Своё «Все N» (например 7 или 12), сохраняется между запусками; 0 — не задано.
+    var customBase by rememberSaveable { mutableStateOf(viewModel.customAllSameBase()) }
+    var showCustomBaseDialog by remember { mutableStateOf(false) }
     val lengthFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(presets) {
@@ -129,7 +137,7 @@ fun MeasureScreen(
     var editingCrossover by remember { mutableStateOf<CrossoverEntity?>(null) }
     var deletePipeTarget by remember { mutableStateOf<PipeEntity?>(null) }
     var deleteCrossoverTarget by remember { mutableStateOf<CrossoverEntity?>(null) }
-    // Длина > 20 м ждёт подтверждения (вероятно, лишняя цифра).
+    // Длина > 15 м ждёт подтверждения (вероятно, лишняя цифра).
     var suspiciousLength by remember { mutableStateOf<Double?>(null) }
 
     /** [confirmed] = true — пользователь подтвердил подозрительно большую длину. */
@@ -150,11 +158,13 @@ fun MeasureScreen(
         lengthFocusRequester.requestFocus()
     }
 
-    // Автодобавление в режиме "Все N": ровно 2 цифры -> труба добавляется сама.
+    // Автодобавление без галочки:
+    // - режим "Все N": ровно 2 цифры сантиметров;
+    // - обычный режим: ввод уже однозначен (труба ≤ 15 м): "638" -> 6.38, "1063" -> 10.63.
     LaunchedEffect(lengthText, allSameBaseMeters, diameter) {
-        if (allSameBaseMeters > 0 && lengthText.length == 2 && diameter.isNotBlank()) {
-            addPipe()
-        }
+        if (diameter.isBlank()) return@LaunchedEffect
+        val complete = if (allSameBaseMeters > 0) lengthText.length == 2 else isCompleteCmInput(lengthText)
+        if (complete) addPipe()
     }
 
     // Визуальная разбивка списка труб ряда на "столбцы" по 10 (последняя — сверху).
@@ -192,6 +202,7 @@ fun MeasureScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -208,6 +219,21 @@ fun MeasureScreen(
                         label = { Text("$base..") }
                     )
                 }
+                // Своё значение: нажатие открывает ввод числа (по умолчанию — прошлое значение),
+                // повторное нажатие на выбранный чип выключает режим.
+                val customSelected = customBase > 0 && allSameBaseMeters == customBase && customBase !in 8..10
+                FilterChip(
+                    selected = customSelected,
+                    onClick = {
+                        if (customSelected) {
+                            allSameBaseMeters = 0
+                            lengthText = ""
+                        } else {
+                            showCustomBaseDialog = true
+                        }
+                    },
+                    label = { Text(if (customBase > 0 && customBase !in 8..10) "$customBase.." else "Своё…") }
+                )
                 if (allSameBaseMeters != 0) {
                     TextButton(
                         onClick = {
@@ -226,7 +252,8 @@ fun MeasureScreen(
             ) {
                 OutlinedTextField(
                     value = lengthText,
-                    onValueChange = { lengthText = it.digitsOnly().take(if (allSameBaseMeters > 0) 2 else 6) },
+                    // Обычный режим: максимум 4 цифры (15.00 м = "1500"), дальше добавление идёт само.
+                    onValueChange = { lengthText = it.digitsOnly().take(if (allSameBaseMeters > 0) 2 else 4) },
                     label = { Text(if (allSameBaseMeters > 0) "См (${allSameBaseMeters}.xx)" else "Длина, см") },
                     prefix = if (allSameBaseMeters > 0) {
                         @Composable { Text("${allSameBaseMeters}.") }
@@ -423,6 +450,21 @@ fun MeasureScreen(
         )
     }
 
+    if (showCustomBaseDialog) {
+        CustomBaseDialog(
+            initial = customBase,
+            onConfirm = { meters ->
+                showCustomBaseDialog = false
+                customBase = meters
+                viewModel.setCustomAllSameBase(meters)
+                allSameBaseMeters = meters
+                lengthText = ""
+                lengthFocusRequester.requestFocus()
+            },
+            onDismiss = { showCustomBaseDialog = false }
+        )
+    }
+
     deleteCrossoverTarget?.let { c ->
         ConfirmDialog(
             title = "Удалить оборудование",
@@ -535,6 +577,37 @@ private fun CrossoverRow(
             Icon(Icons.Filled.DeleteOutline, contentDescription = "Удалить", tint = MaterialTheme.colorScheme.outline)
         }
     }
+}
+
+/** Ввод своего «Все N»: целые метры из [ALL_SAME_BASE_RANGE] (N.xx не длиннее 15 м). */
+@Composable
+private fun CustomBaseDialog(initial: Int, onConfirm: (Int) -> Unit, onDismiss: () -> Unit) {
+    var text by rememberSaveable { mutableStateOf(if (initial > 0) initial.toString() else "") }
+    val value = text.toIntOrNull()
+    val valid = value != null && value in ALL_SAME_BASE_RANGE
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Все трубы: N.xx м") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it.digitsOnly().take(2) },
+                label = { Text("Целые метры (${ALL_SAME_BASE_RANGE.first}–${ALL_SAME_BASE_RANGE.last})") },
+                isError = text.isNotEmpty() && !valid,
+                supportingText = { Text("Например 7 → 7.xx, 12 → 12.xx; дальше вводятся только сантиметры") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (valid) onConfirm(value!!) }),
+                modifier = Modifier.focusRequester(focus)
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(value!!) }, enabled = valid) { Text("OK") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
+    )
 }
 
 /** Метры -> сантиметры строкой. roundToInt, а не toInt: 9.57 * 100 = 956.99… -> 957. */

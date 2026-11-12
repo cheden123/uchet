@@ -163,4 +163,9 @@ class MeasureViewModel(private val repo: UchetRepository) : ViewModel() {
     fun rememberDiameter(label: String) = repo.setLastDiameter(label)
 
     fun lastDiameterOrBlank(): String = repo.lastDiameter() ?: ""
+
+    /** Своё «Все N» (0 — не задано); сохраняется между запусками. */
+    fun customAllSameBase(): Int = repo.customAllSameBase()
+
+    fun setCustomAllSameBase(meters: Int) = repo.setCustomAllSameBase(meters)
 }

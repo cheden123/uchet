@@ -269,7 +269,7 @@ fun PipeEditorDialog(
 
     val lengthCm = lengthText.toIntOrNull() ?: 0
     val canSave = lengthCm > 0 && diameter.isNotBlank()
-    // > 20 м — не запрещаем, но подсвечиваем: скорее всего лишняя цифра.
+    // > 15 м — не запрещаем, но подсвечиваем: скорее всего лишняя цифра.
     val suspicious = parseCmInput(lengthText)?.isSuspicious == true
 
     AlertDialog(
