@@ -2,9 +2,7 @@ package com.uchet.ui.statistics
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.uchet.data.model.CumulativeLength
 import com.uchet.data.model.RunEntity
-import com.uchet.data.model.SpoPipeRow
 import com.uchet.data.repository.SpoPipeRowsResult
 import com.uchet.data.repository.UchetRepository
 import com.uchet.data.repository.buildSpoPipeRows
@@ -40,31 +38,11 @@ class StatisticsViewModel(private val repo: UchetRepository) : ViewModel() {
         if (id == null) flowOf(emptyList()) else repo.observeBha(id)
     }
 
-    private val rowsResult: StateFlow<SpoPipeRowsResult> =
+    /** Строки труб + итоги по всей СПО (итог — totalWithBha, а не последняя строка). */
+    val result: StateFlow<SpoPipeRowsResult> =
         combine(runsFlow, pipesFlow, crossoversFlow, bhaFlow) { runs, pipes, cos, bha ->
             buildSpoPipeRows(runs, pipes, cos, bha)
-        }.stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5_000),
-            SpoPipeRowsResult(emptyList(), 0.0, 0.0)
-        )
-
-    val rows: StateFlow<List<SpoPipeRow>> = rowsResult
-        .map { it.rows }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    /**
-     * Итоги по всей колонне СПО. Считаются по всему набору труб/оборудования,
-     * поэтому учитывают и оборудование, добавленное после последней трубы
-     * (в отличие от `rows.lastOrNull()`).
-     */
-    val totals: StateFlow<CumulativeLength> = rowsResult
-        .map { CumulativeLength(pipesOnly = it.totalPipesOnly, withBha = it.totalWithBha) }
-        .stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5_000),
-            CumulativeLength(0.0, 0.0)
-        )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SpoPipeRowsResult.EMPTY)
 
     /** История ТОЛЬКО завершённых рядов (активный ряд сюда не попадает). */
     val completedRuns: StateFlow<List<RunEntity>> = runsFlow

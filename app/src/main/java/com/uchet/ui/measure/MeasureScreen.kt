@@ -63,18 +63,14 @@ import com.uchet.ui.components.DiameterPickerDialog
 import com.uchet.ui.components.EmptyState
 import com.uchet.ui.components.SectionHeader
 import com.uchet.ui.components.digitsOnly
+import com.uchet.util.MAX_REASONABLE_PIPE_M
 import com.uchet.util.formatMetersFull
+import com.uchet.util.parseCmInput
+import com.uchet.ui.components.showUndo
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
-
-/**
- * Разбор ввода длины трубы: базовые метры + дробная часть (введённые цифры).
- * Обычный режим: baseMeters = 0, ввод в сантиметрах целиком ("963" → 9.63 м).
- * Режим "Все N": baseMeters = 8/9/10, вводятся только сантиметры ("63" → 9.63 м).
- */
-fun parseCmInput(digits: String, baseMeters: Int = 0): Double? {
-    val value = digits.trim().toIntOrNull() ?: return null
-    return baseMeters + value / 100.0
-}
+import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 @Composable
 fun MeasureScreen(
@@ -133,15 +129,22 @@ fun MeasureScreen(
     var editingCrossover by remember { mutableStateOf<CrossoverEntity?>(null) }
     var deletePipeTarget by remember { mutableStateOf<PipeEntity?>(null) }
     var deleteCrossoverTarget by remember { mutableStateOf<CrossoverEntity?>(null) }
+    // Длина > 20 м ждёт подтверждения (вероятно, лишняя цифра).
+    var suspiciousLength by remember { mutableStateOf<Double?>(null) }
 
-    fun addPipe() {
-        val meters = parseCmInput(lengthText, if (allSameBaseMeters > 0) allSameBaseMeters else 0) ?: return
+    /** [confirmed] = true — пользователь подтвердил подозрительно большую длину. */
+    fun addPipe(confirmed: Boolean = false) {
+        val input = parseCmInput(lengthText, if (allSameBaseMeters > 0) allSameBaseMeters else 0) ?: return
         if (diameter.isBlank()) {
             showDiameterPicker = true
             scope.launch { snackbarHostState.showSnackbar("Выберите типоразмер") }
             return
         }
-        viewModel.addPipeMeters(meters, diameter)
+        if (input.isSuspicious && !confirmed) {
+            suspiciousLength = input.meters
+            return
+        }
+        viewModel.addPipeMeters(input.meters, diameter)
         lengthText = ""
         // Поле остаётся в фокусе для следующего ввода (одинаково для кнопки и галочки на клавиатуре).
         lengthFocusRequester.requestFocus()
@@ -341,7 +344,8 @@ fun MeasureScreen(
     crossoverAfterPipe?.let { afterIndex ->
         CrossoverEditorDialog(
             presets = presets.map { it.name },
-            afterPipeLabel = if (afterIndex < 0) "Перед первой трубой ряда" else "После трубы № ${afterIndex + 1}",
+            // indexInRun 1-based: подпись — сам номер трубы (раньше было +1, сдвиг на одну трубу).
+            afterPipeLabel = if (afterIndex < 0) "Перед первой трубой ряда" else "После трубы № $afterIndex",
             onDismiss = { crossoverAfterPipe = null },
             onSave = { type, customName, dia, cm, note ->
                 viewModel.addCrossover(
@@ -360,7 +364,7 @@ fun MeasureScreen(
     editingCrossover?.let { c ->
         CrossoverEditorDialog(
             presets = presets.map { it.name },
-            afterPipeLabel = if (c.afterPipeIndex == 0) "Перед первой трубой ряда" else "После трубы № ${c.afterPipeIndex + 1}",
+            afterPipeLabel = if (c.afterPipeIndex == 0) "Перед первой трубой ряда" else "После трубы № ${c.afterPipeIndex}",
             existingType = c.type,
             existingCustomName = c.customTypeName,
             existingDiameter = c.diameterLabel,
@@ -387,10 +391,35 @@ fun MeasureScreen(
             title = "Удалить трубу",
             text = "Удалить трубу #${globalOffset + pipe.indexInRun} (№${pipe.indexInRun}, ${formatMetersFull(pipe.lengthM)})?",
             onConfirm = {
-                viewModel.deletePipe(pipe)
                 deletePipeTarget = null
+                scope.launch {
+                    // Само удаление не прерываем, даже если экран закроют в этот момент.
+                    val deleted = withContext(NonCancellable) { viewModel.deletePipe(pipe) }
+                    if (snackbarHostState.showUndo("Труба №${pipe.indexInRun} удалена") &&
+                        !viewModel.restorePipe(deleted)
+                    ) {
+                        snackbarHostState.showSnackbar("Не удалось восстановить трубу")
+                    }
+                }
             },
             onDismiss = { deletePipeTarget = null }
+        )
+    }
+
+    suspiciousLength?.let { m ->
+        ConfirmDialog(
+            title = "Проверьте длину",
+            text = "Длина ${formatMetersFull(m)} — больше ${formatMetersFull(MAX_REASONABLE_PIPE_M)}. " +
+                "Возможно, введена лишняя цифра. Добавить трубу с такой длиной?",
+            confirmLabel = "Добавить",
+            onConfirm = {
+                suspiciousLength = null
+                addPipe(confirmed = true)
+            },
+            onDismiss = {
+                suspiciousLength = null
+                lengthFocusRequester.requestFocus()
+            }
         )
     }
 
@@ -508,4 +537,5 @@ private fun CrossoverRow(
     }
 }
 
-private fun formatCm(m: Double): String = (m * 100).toInt().toString()
+/** Метры -> сантиметры строкой. roundToInt, а не toInt: 9.57 * 100 = 956.99… -> 957. */
+private fun formatCm(m: Double): String = (m * 100).roundToInt().toString()

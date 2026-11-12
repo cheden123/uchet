@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.uchet.data.model.DiameterPreset
 import com.uchet.data.repository.UchetRepository
+import com.uchet.export.DbBackup
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -33,4 +35,7 @@ class SettingsViewModel(private val repo: UchetRepository) : ViewModel() {
     fun delete(preset: DiameterPreset) {
         viewModelScope.launch { repo.deletePreset(preset) }
     }
+
+    /** Копия всей базы в [outDir]; пути даёт экран (у ViewModel нет Context). */
+    suspend fun createBackup(dbFile: File, outDir: File): File = DbBackup(repo, dbFile, outDir).create()
 }

@@ -48,7 +48,8 @@ fun SpoPipesScreen(
     val currentSpoId by mainViewModel.currentSpoId.collectAsStateWithLifecycle()
     LaunchedEffect(currentSpoId) { viewModel.attach(currentSpoId) }
 
-    val rows by viewModel.rows.collectAsStateWithLifecycle()
+    val result by viewModel.result.collectAsStateWithLifecycle()
+    val rows = result.rows
 
     if (currentSpoId == null) {
         EmptyState(message = "Нет выбранной СПО")
@@ -86,6 +87,29 @@ fun SpoPipesScreen(
             when (item) {
                 is PipeListItem.Header -> RunHeaderRow(item.runNumber, item.runId, onEditRun)
                 is PipeListItem.Pipe -> PipeDetailRow(item.row)
+            }
+        }
+        // Итог по СПО: учитывает и оборудование после последней трубы,
+        // которого нет в строке последней трубы.
+        item(key = "spo_total") {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                Text("Итого по СПО", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Трубы с оборудованием:", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(formatMetersFull(result.totalPipesOnly), fontWeight = FontWeight.Medium)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("С учётом компоновки:", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        formatMetersFull(result.totalWithBha),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
     }

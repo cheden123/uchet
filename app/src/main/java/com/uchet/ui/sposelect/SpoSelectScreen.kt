@@ -17,7 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -50,7 +50,10 @@ import com.uchet.ui.components.ConfirmDialog
 import com.uchet.ui.components.EmptyState
 import com.uchet.ui.components.SpoFormDialog
 import com.uchet.util.formatDate
+import com.uchet.ui.components.showUndo
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -124,8 +127,21 @@ fun SpoSelectScreen(
             title = "Удалить СПО",
             text = "Удалить «${spo.title.ifBlank { "СПО" }}» вместе со всеми рядами, трубами и компоновкой?",
             onConfirm = {
-                scope.launch { viewModel.delete(spo) }
                 deleteTarget = null
+                scope.launch {
+                    // Само удаление не прерываем, даже если экран закроют в этот момент.
+                    val deleted = withContext(NonCancellable) { viewModel.delete(spo) }
+                    // Если удалили текущую СПО — репозиторий сбросил выбор, обновляем MainViewModel
+                    // (раньше экраны продолжали показывать удалённую СПО).
+                    if (deleted.wasCurrent) mainViewModel.refresh()
+                    if (snackbarHostState.showUndo("СПО «${spo.title.ifBlank { "СПО" }}» удалена")) {
+                        if (viewModel.restore(deleted)) {
+                            mainViewModel.refresh()
+                        } else {
+                            snackbarHostState.showSnackbar("Не удалось восстановить СПО")
+                        }
+                    }
+                }
             },
             onDismiss = { deleteTarget = null }
         )
@@ -227,7 +243,7 @@ private fun SpoCard(
                     Icon(Icons.Filled.Visibility, contentDescription = "Просмотр", tint = MaterialTheme.colorScheme.primary)
                 }
                 IconButton(onClick = onShare) {
-                    Icon(Icons.Filled.Send, contentDescription = "Отправить", tint = MaterialTheme.colorScheme.primary)
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Отправить", tint = MaterialTheme.colorScheme.primary)
                 }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Filled.DeleteOutline, contentDescription = "Удалить", tint = MaterialTheme.colorScheme.error)

@@ -2,7 +2,9 @@ package com.uchet.ui.editrun
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.database.SQLException
 import com.uchet.data.model.CrossoverEntity
+import com.uchet.data.model.DeletedPipe
 import com.uchet.data.model.PipeEntity
 import com.uchet.data.model.RunEntity
 import com.uchet.data.repository.UchetRepository
@@ -57,13 +59,27 @@ class EditRunViewModel(private val repo: UchetRepository) : ViewModel() {
         viewModelScope.launch { repo.updatePipe(pipe.copy(lengthM = lengthCm / 100.0, diameterLabel = diameterLabel)) }
     }
 
-    fun deletePipe(pipe: PipeEntity) {
-        viewModelScope.launch { repo.deletePipe(pipe) }
+    /** Удаляет трубу; снимок — для отмены через [restorePipe]. */
+    suspend fun deletePipe(pipe: PipeEntity): DeletedPipe = repo.deletePipe(pipe)
+
+    /** false — восстановить не удалось (например, ряд/СПО уже удалены — нарушение внешнего ключа). */
+    suspend fun restorePipe(d: DeletedPipe): Boolean = try {
+        repo.restorePipe(d)
+        true
+    } catch (e: SQLException) {
+        false
     }
 
+    /**
+     * Вставка после трубы [afterIndex]; -1 («в начало ряда» из экрана) -> 0.
+     * Раньше -1 уходило в insertPipeAt как есть: новая труба получала indexInRun = 0,
+     * а оборудование «перед первой трубой» (afterPipeIndex = 0) сдвигалось на 1.
+     */
     fun insertAfter(afterIndex: Int, lengthCm: Int, diameterLabel: String) {
         val id = _runId.value ?: return
-        viewModelScope.launch { repo.insertPipeAt(id, afterIndex, lengthCm / 100.0, diameterLabel) }
+        viewModelScope.launch {
+            repo.insertPipeAt(id, afterIndex.coerceAtLeast(0), lengthCm / 100.0, diameterLabel)
+        }
     }
 
     fun addCrossover(

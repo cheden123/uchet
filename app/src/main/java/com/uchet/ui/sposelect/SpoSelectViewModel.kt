@@ -1,7 +1,9 @@
 package com.uchet.ui.sposelect
 
+import android.database.SQLException
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.uchet.data.model.DeletedSpo
 import com.uchet.data.model.SpoEntity
 import com.uchet.data.repository.UchetRepository
 import kotlinx.coroutines.flow.SharingStarted
@@ -21,7 +23,16 @@ class SpoSelectViewModel(private val repo: UchetRepository) : ViewModel() {
         title: String
     ): Long = repo.createSpo(startDate, wellCluster, wellNumber, fieldName, title)
 
-    suspend fun delete(spo: SpoEntity) = repo.deleteSpo(spo)
+    /** Удаляет СПО со всеми данными; снимок — для отмены через [restore]. */
+    suspend fun delete(spo: SpoEntity): DeletedSpo = repo.deleteSpo(spo)
+
+    /** false — восстановить не удалось (конфликт id / внешних ключей). */
+    suspend fun restore(d: DeletedSpo): Boolean = try {
+        repo.restoreSpo(d)
+        true
+    } catch (e: SQLException) {
+        false
+    }
 
     suspend fun setCompleted(id: Long, completed: Boolean) = repo.setSpoCompleted(id, completed)
 

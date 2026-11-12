@@ -10,18 +10,21 @@ import com.uchet.data.model.SpoPipeRow
 /**
  * Результат построения сквозной таблицы труб СПО.
  *
- * [rows] — построчные значения «по состоянию на эту трубу» (оборудование,
- * стоящее ПОСЛЕ трубы, в её строку не входит). Итоги же считаются по всей
- * колонне, включая оборудование после самой последней трубы — поэтому брать
- * общую длину из `rows.lastOrNull()` нельзя.
+ * [rows] — построчные значения (у каждой трубы накопленная длина «по эту трубу
+ * включительно», БЕЗ оборудования, стоящего после неё).
+ * [totalPipesOnly] / [totalWithBha] — итог по всей СПО: все трубы + всё
+ * оборудование (в т.ч. стоящее после последней трубы или в ряду без труб),
+ * без компоновки / с компоновкой. Итог брать отсюда, а не из rows.lastOrNull().
  */
 data class SpoPipeRowsResult(
     val rows: List<SpoPipeRow>,
-    /** Трубы + всё оборудование СПО, без компоновки. */
     val totalPipesOnly: Double,
-    /** То же + суммарная длина компоновки (BHA). */
     val totalWithBha: Double
-)
+) {
+    companion object {
+        val EMPTY = SpoPipeRowsResult(emptyList(), 0.0, 0.0)
+    }
+}
 
 /**
  * Чистая функция: строит сквозную таблицу труб СПО за один проход.
@@ -30,6 +33,14 @@ data class SpoPipeRowsResult(
  *
  * Порядок: ряды по createdAt ASC (самый старый ряд — наименьшие номера),
  * внутри ряда — по indexInRun. Нумерация сквозная «от забоя вверх».
+ *
+ * Оборудование ряда учитывается так:
+ *  - afterPipeIndex == 0 — перед первой трубой ряда;
+ *  - afterPipeIndex == indexInRun трубы — сразу после неё (в withBha этой трубы
+ *    не входит, входит в следующую трубу и в итог);
+ *  - afterPipeIndex, не совпадающий ни с одной трубой ряда («висячее»), —
+ *    в конце ряда. Так итог совпадает с UchetRepository.getCumulativeLengthUpTo,
+ *    который для предыдущих рядов суммирует ВСЁ оборудование ряда.
  */
 fun buildSpoPipeRows(
     runs: List<RunEntity>,
@@ -38,7 +49,8 @@ fun buildSpoPipeRows(
     bhaComponents: List<BhaComponentEntity>
 ): SpoPipeRowsResult {
     val bhaTotal = bhaComponents.sumOf { it.lengthM }
-    val pipesByRun = pipes.groupBy { it.runId }
+    // Порядок труб внутри ряда не полагаем на порядок из запроса — сортируем явно.
+    val pipesByRun = pipes.groupBy { it.runId }.mapValues { (_, list) -> list.sortedBy { it.indexInRun } }
     val crossoversByRun = crossovers.groupBy { it.runId }
 
     val rows = ArrayList<SpoPipeRow>()
@@ -49,6 +61,7 @@ fun buildSpoPipeRows(
         val runNumber = order + 1
         val runPipes = pipesByRun[run.id].orEmpty()
         val runCrossovers = crossoversByRun[run.id].orEmpty()
+        val pipeIndices = runPipes.mapTo(HashSet()) { it.indexInRun }
 
         cumulative += runCrossovers.filter { it.afterPipeIndex == 0 }.sumOf { it.lengthM }
 
@@ -71,14 +84,15 @@ fun buildSpoPipeRows(
                 pipesOnly = cumulative,
                 withBha = cumulative + bhaTotal
             )
-            // Оборудование после этой трубы учитывается в накоплении, но в её
-            // строку не попадает — оно относится к точке сразу за трубой.
+            // Оборудование после трубы входит в следующую строку и в итог.
             cumulative += xo.sumOf { it.lengthM }
         }
-    }
 
-    // cumulative уже включает хвостовое оборудование после последней трубы,
-    // даже если следующей трубы нет — именно это значение и есть итог колонны.
+        // «Висячее» оборудование (не привязано ни к началу, ни к существующей трубе).
+        cumulative += runCrossovers
+            .filter { it.afterPipeIndex != 0 && it.afterPipeIndex !in pipeIndices }
+            .sumOf { it.lengthM }
+    }
     return SpoPipeRowsResult(
         rows = rows,
         totalPipesOnly = cumulative,

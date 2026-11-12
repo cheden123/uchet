@@ -3,7 +3,9 @@ package com.uchet.ui.measure
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.uchet.data.model.CrossoverEntity
+import android.database.SQLException
 import com.uchet.data.model.CumulativeLength
+import com.uchet.data.model.DeletedPipe
 import com.uchet.data.model.DiameterPreset
 import com.uchet.data.model.PipeEntity
 import com.uchet.data.model.RunEntity
@@ -62,20 +64,25 @@ class MeasureViewModel(private val repo: UchetRepository) : ViewModel() {
     val presets: StateFlow<List<DiameterPreset>> = repo.observePresets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** Компоновка текущей СПО — нужна только как триггер пересчёта lastCumulative. */
+    private val bha = _spoId
+        .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repo.observeBha(id) }
+
     /**
-     * Нарастающая длина для последней трубы активного ряда (текущая длина колонны).
-     * Если труб в ряду ещё нет, точка отсчёта — начало колонны (pipeIndex = 0):
-     * тогда учитывается только оборудование перед первой трубой и компоновка.
+     * Нарастающая длина для последней трубы активного ряда (текущая длина колонны),
+     * включая оборудование после неё. Пересчитывается при изменении труб,
+     * оборудования ряда и компоновки (раньше смена компоновки не вызывала пересчёт).
+     * Если в активном ряду ещё нет труб — берётся pipeIndex = 0: длина всех
+     * предыдущих рядов + оборудование в начале ряда + компоновка (раньше было null → «0 м»).
      */
     val lastCumulative: StateFlow<CumulativeLength?> =
-        combine(_spoId, activeRun, pipes, crossovers) { spoId, run, p, c ->
-            Quad(spoId, run, p, c)
+        combine(_spoId, activeRun, pipes, crossovers, bha) { spoId, run, p, _, _ ->
+            Triple(spoId, run, p)
         }
-            .flatMapLatest { (spoId, run, p, c) ->
+            .flatMapLatest { (spoId, run, p) ->
                 flow {
                     if (spoId != null && run != null) {
-                        val pipeIndex = p.lastOrNull()?.indexInRun ?: 0
-                        emit(repo.getCumulativeLengthUpTo(spoId, run.id, pipeIndex))
+                        emit(repo.getCumulativeLengthUpTo(spoId, run.id, p.lastOrNull()?.indexInRun ?: 0))
                     } else {
                         emit(null)
                     }
@@ -115,8 +122,15 @@ class MeasureViewModel(private val repo: UchetRepository) : ViewModel() {
         viewModelScope.launch { repo.updatePipe(pipe.copy(lengthM = lengthCm / 100.0, diameterLabel = diameterLabel)) }
     }
 
-    fun deletePipe(pipe: PipeEntity) {
-        viewModelScope.launch { repo.deletePipe(pipe) }
+    /** Удаляет трубу; снимок — для отмены через [restorePipe]. */
+    suspend fun deletePipe(pipe: PipeEntity): DeletedPipe = repo.deletePipe(pipe)
+
+    /** false — восстановить не удалось (например, ряд/СПО уже удалены — нарушение внешнего ключа). */
+    suspend fun restorePipe(d: DeletedPipe): Boolean = try {
+        repo.restorePipe(d)
+        true
+    } catch (e: SQLException) {
+        false
     }
 
     fun completeActiveRun() {
@@ -149,6 +163,4 @@ class MeasureViewModel(private val repo: UchetRepository) : ViewModel() {
     fun rememberDiameter(label: String) = repo.setLastDiameter(label)
 
     fun lastDiameterOrBlank(): String = repo.lastDiameter() ?: ""
-
-    private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 }

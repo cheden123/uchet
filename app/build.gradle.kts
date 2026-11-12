@@ -36,6 +36,9 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        // flatMapLatest во ViewModel'ях — ExperimentalCoroutinesApi; разрешаем глобально,
+        // чтобы не размечать каждый файл и не получать предупреждения сборки.
+        freeCompilerArgs += "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
     }
 
     buildFeatures {
@@ -44,6 +47,17 @@ android {
 
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"
+    }
+
+    // Robolectric: тестам нужны ресурсы/ассеты приложения.
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+
+    // Схемы Room — ассеты для MigrationTestHelper. Только debug-сборка
+    // (в неё же идут unit-тесты), в release-APK схемы не попадают.
+    sourceSets {
+        getByName("debug").assets.srcDir("$projectDir/schemas")
     }
 
     packaging {
@@ -58,6 +72,13 @@ android {
             excludes += "/META-INF/INDEX.LIST"
         }
     }
+}
+
+// Unit-тесты гоняем только в debug: там лежат схемы Room (ассеты) для MigrationTest,
+// а release-вариант запускал бы тот же код (R8 к unit-тестам не применяется) и падал
+// бы без схем. Так `./gradlew test` = testDebugUnitTest.
+tasks.matching { it.name == "testReleaseUnitTest" }.configureEach {
+    enabled = false
 }
 
 // Room: export schemas (must be committed to VCS).
@@ -93,4 +114,12 @@ dependencies {
     implementation("org.apache.poi:poi-ooxml:5.2.5")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // Юнит-тесты чистой логики (buildSpoPipeRows и т.п.) — запускаются `./gradlew test`.
+    testImplementation("junit:junit:4.13.2")
+    // Тест миграций Room на JVM (Robolectric) — без эмулятора/устройства.
+    testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("androidx.room:room-testing:2.6.1")
+    testImplementation("androidx.test:core-ktx:1.6.1")
+    testImplementation("androidx.test.ext:junit-ktx:1.2.1")
 }

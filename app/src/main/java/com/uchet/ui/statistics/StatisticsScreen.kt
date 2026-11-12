@@ -39,8 +39,8 @@ fun StatisticsScreen(
     val currentSpoId by mainViewModel.currentSpoId.collectAsStateWithLifecycle()
     LaunchedEffect(currentSpoId) { viewModel.attach(currentSpoId) }
 
-    val rows by viewModel.rows.collectAsStateWithLifecycle()
-    val totals by viewModel.totals.collectAsStateWithLifecycle()
+    val result by viewModel.result.collectAsStateWithLifecycle()
+    val rows = result.rows
     val completedRuns by viewModel.completedRuns.collectAsStateWithLifecycle()
     val allRuns by viewModel.allRuns.collectAsStateWithLifecycle()
     val crossoversTotal by viewModel.crossoversTotal.collectAsStateWithLifecycle()
@@ -94,8 +94,14 @@ fun StatisticsScreen(
                         "Суммарная длина оборудования: ${formatMetersFull(crossoversTotal)}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    // Итоги — по всей СПО, включая оборудование после последней трубы
+                    // (совпадают с «Длина / с компоновкой» на экране «Замер»).
                     Text(
-                        "С учётом компоновки: ${formatMetersFull(totals.withBha)}",
+                        "Трубы с оборудованием: ${formatMetersFull(result.totalPipesOnly)}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "С учётом компоновки: ${formatMetersFull(result.totalWithBha)}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }

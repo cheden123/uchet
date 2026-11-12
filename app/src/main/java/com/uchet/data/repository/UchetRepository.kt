@@ -7,6 +7,8 @@ import com.uchet.data.model.BhaComponentEntity
 import com.uchet.data.model.CrossoverEntity
 import com.uchet.data.model.CrossoverTypes
 import com.uchet.data.model.CumulativeLength
+import com.uchet.data.model.DeletedPipe
+import com.uchet.data.model.DeletedSpo
 import com.uchet.data.model.DiameterPreset
 import com.uchet.data.model.ExportData
 import com.uchet.data.model.ExportDiameterRow
@@ -15,7 +17,9 @@ import com.uchet.data.model.PipeEntity
 import com.uchet.data.model.RunEntity
 import com.uchet.data.model.SpoEntity
 import com.uchet.data.model.SpoPipeRow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -88,9 +92,42 @@ class UchetRepository(
         spoDao.getById(id)?.let { spoDao.update(it.copy(isCompleted = completed)) }
     }
 
-    suspend fun deleteSpo(spo: SpoEntity) {
-        if (currentSpoId() == spo.id) clearCurrentSpoId()
-        spoDao.delete(spo)
+    /**
+     * Удаляет СПО (каскадом — ряды, трубы, оборудование, компоновку) и возвращает
+     * снимок всех её данных для отмены удаления ([restoreSpo]).
+     */
+    suspend fun deleteSpo(spo: SpoEntity): DeletedSpo {
+        val wasCurrent = currentSpoId() == spo.id
+        val snapshot = db.withTransaction {
+            val s = DeletedSpo(
+                spo = spoDao.getById(spo.id) ?: spo,
+                runs = runDao.getRunsForSpo(spo.id),
+                pipes = pipeDao.getPipesForSpo(spo.id),
+                crossovers = crossoverDao.getCrossoversForSpo(spo.id),
+                bha = bhaDao.getForSpo(spo.id),
+                wasCurrent = wasCurrent
+            )
+            spoDao.delete(spo)
+            s
+        }
+        if (wasCurrent) clearCurrentSpoId()
+        return snapshot
+    }
+
+    /**
+     * Восстанавливает удалённую СПО с исходными id (порядок вставки — по внешним
+     * ключам: СПО -> ряды -> трубы/оборудование, компоновка). Если СПО была текущей
+     * и другая ещё не выбрана — снова делает её текущей.
+     */
+    suspend fun restoreSpo(d: DeletedSpo) {
+        db.withTransaction {
+            spoDao.insert(d.spo)
+            d.runs.forEach { runDao.insert(it) }
+            d.pipes.forEach { pipeDao.insert(it) }
+            d.crossovers.forEach { crossoverDao.insert(it) }
+            d.bha.forEach { bhaDao.insert(it) }
+        }
+        if (d.wasCurrent && currentSpoId() == null) setCurrentSpoId(d.spo.id)
     }
 
     // ------------------------------------------------------------------ ряды
@@ -191,7 +228,7 @@ class UchetRepository(
      * после удаляемой трубы, переезжает на предыдущую трубу (он физически
      * остаётся в том же месте колонны).
      */
-    suspend fun deletePipe(pipe: PipeEntity) = db.withTransaction {
+    suspend fun deletePipe(pipe: PipeEntity): DeletedPipe = db.withTransaction {
         pipeDao.deleteById(pipe.id)
         pipeDao.shiftIndicesAfter(pipe.runId, pipe.indexInRun, -1)
         val anchored = crossoverDao.getAnchoredAt(pipe.runId, pipe.indexInRun)
@@ -199,6 +236,25 @@ class UchetRepository(
             crossoverDao.update(c.copy(afterPipeIndex = (pipe.indexInRun - 1).coerceAtLeast(0)))
         }
         crossoverDao.shiftIndicesAfter(pipe.runId, pipe.indexInRun, -1)
+        // Снимок для отмены: сама труба + какое оборудование стояло после неё.
+        DeletedPipe(pipe, anchored.map { it.id })
+    }
+
+    /**
+     * Отмена [deletePipe] — обратные операции в одной транзакции:
+     * сдвиг труб и оборудования после (index-1) на +1, вставка трубы с исходным id
+     * на исходный indexInRun, возврат «перевешенного» оборудования на эту трубу.
+     * Оборудование, стоявшее после предыдущей трубы (index-1) до удаления, остаётся там.
+     */
+    suspend fun restorePipe(d: DeletedPipe) = db.withTransaction {
+        val p = d.pipe
+        pipeDao.shiftIndicesAfter(p.runId, p.indexInRun - 1, +1)
+        crossoverDao.shiftIndicesAfter(p.runId, p.indexInRun - 1, +1)
+        pipeDao.insert(p)
+        val anchoredIds = d.anchoredCrossoverIds.toSet()
+        for (c in crossoverDao.getCrossoversForRun(p.runId)) {
+            if (c.id in anchoredIds) crossoverDao.update(c.copy(afterPipeIndex = p.indexInRun))
+        }
     }
 
     // ------------------------------------------------------------------ переводники/оборудование
@@ -316,10 +372,9 @@ class UchetRepository(
 
     /**
      * Все трубы СПО в физическом порядке с накопленной длиной у каждой,
-     * а также настоящие итоги по колонне (включая оборудование после самой
-     * последней трубы), посчитанные за один проход (не N+1 запросов).
+     * посчитанной за один проход (не N+1 запросов).
      */
-    suspend fun getSpoRows(spoId: Long): SpoPipeRowsResult =
+    suspend fun getAllPipesInSpo(spoId: Long): SpoPipeRowsResult =
         buildSpoPipeRows(
             runs = runDao.getRunsForSpo(spoId),
             pipes = pipeDao.getPipesForSpo(spoId),
@@ -327,15 +382,13 @@ class UchetRepository(
             bhaComponents = bhaDao.getForSpo(spoId)
         )
 
-    /** Только построчные значения (без общих итогов). */
-    suspend fun getAllPipesInSpo(spoId: Long): List<SpoPipeRow> = getSpoRows(spoId).rows
-
     // ------------------------------------------------------------------ экспорт
 
     /** Данные для экспорта одной СПО (все ряды — одна сквозная таблица). */
     suspend fun getExportData(spoId: Long): ExportData {
         val spo = spoDao.getById(spoId) ?: error("СПО не найдена")
-        val rows = getAllPipesInSpo(spoId)
+        val result = getAllPipesInSpo(spoId)
+        val rows = result.rows
         val runs = runDao.getRunsForSpo(spoId)
 
         // (runId, indexInRun) -> глобальный номер трубы
@@ -380,7 +433,10 @@ class UchetRepository(
             diameterStats = stats,
             bhaComponents = bhaDao.getForSpo(spoId),
             totalPipes = rows.size,
-            totalLengthM = rows.sumOf { it.lengthM }
+            totalLengthM = rows.sumOf { it.lengthM },
+            // Общий итог — по всей СПО, включая оборудование после последней трубы.
+            totalPipesOnly = result.totalPipesOnly,
+            totalWithBha = result.totalWithBha
         )
     }
 
@@ -397,6 +453,19 @@ class UchetRepository(
         lengthM = c.lengthM,
         note = c.note.ifBlank { "Ряд $runNumber" }
     )
+
+    // ------------------------------------------------------------------ резервная копия
+
+    /**
+     * Переносит журнал WAL в основной файл БД (PRAGMA wal_checkpoint(FULL)), чтобы
+     * копия uchet.db содержала все данные. true — перенесено полностью (busy = 0);
+     * false — БД занята другой операцией, копировать сейчас нельзя.
+     */
+    suspend fun checkpointDatabase(): Boolean = withContext(Dispatchers.IO) {
+        db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)").use { c ->
+            c.moveToFirst() && c.getInt(0) == 0
+        }
+    }
 
     companion object {
         private const val KEY_CURRENT_SPO = "current_spo_id"
