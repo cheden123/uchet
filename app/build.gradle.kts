@@ -93,4 +93,7 @@ dependencies {
     implementation("org.apache.poi:poi-ooxml:5.2.5")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // Юнит-тесты чистой логики (buildSpoPipeRows и т.п.) — запускаются `./gradlew test`.
+    testImplementation("junit:junit:4.13.2")
 }

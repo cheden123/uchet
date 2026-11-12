@@ -206,6 +206,18 @@ class ExcelExporter(private val context: Context) {
             start = end
         }
 
+        // --- общий итог по СПО (из SpoPipeRowsResult, с оборудованием после последней трубы)
+        sheet.createRow(r++) // пустая строка
+        val totalRow = sheet.createRow(r++)
+        putText(totalRow, 0, "Итого: труб ${data.totalPipes} шт., длина труб ${formatMeters(data.totalLengthM)} м", boldStyle)
+        val totalRow2 = sheet.createRow(r++)
+        putText(
+            totalRow2, 0,
+            "Длина колонны с оборудованием ${formatMeters(data.totalPipesOnly)} м, " +
+                "с компоновкой ${formatMeters(data.totalWithBha)} м",
+            boldStyle
+        )
+
         // --- подписи --------------------------------------------------------
         sheet.createRow(r++) // пустая строка
         val signRow = sheet.createRow(r++)

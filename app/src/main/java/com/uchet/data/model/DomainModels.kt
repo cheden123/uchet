@@ -58,7 +58,12 @@ data class ExportData(
     val diameterStats: List<ExportDiameterRow>,
     val bhaComponents: List<BhaComponentEntity>,
     val totalPipes: Int,
-    val totalLengthM: Double
+    /** Сумма длин только труб (без оборудования и компоновки). */
+    val totalLengthM: Double,
+    /** Итог по СПО: трубы + всё оборудование, без компоновки (из SpoPipeRowsResult). */
+    val totalPipesOnly: Double,
+    /** Итог по СПО: трубы + оборудование + компоновка (из SpoPipeRowsResult). */
+    val totalWithBha: Double
 )
 
 object CrossoverTypes {

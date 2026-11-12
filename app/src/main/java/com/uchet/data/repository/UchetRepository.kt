@@ -318,7 +318,7 @@ class UchetRepository(
      * Все трубы СПО в физическом порядке с накопленной длиной у каждой,
      * посчитанной за один проход (не N+1 запросов).
      */
-    suspend fun getAllPipesInSpo(spoId: Long): List<SpoPipeRow> =
+    suspend fun getAllPipesInSpo(spoId: Long): SpoPipeRowsResult =
         buildSpoPipeRows(
             runs = runDao.getRunsForSpo(spoId),
             pipes = pipeDao.getPipesForSpo(spoId),
@@ -331,7 +331,8 @@ class UchetRepository(
     /** Данные для экспорта одной СПО (все ряды — одна сквозная таблица). */
     suspend fun getExportData(spoId: Long): ExportData {
         val spo = spoDao.getById(spoId) ?: error("СПО не найдена")
-        val rows = getAllPipesInSpo(spoId)
+        val result = getAllPipesInSpo(spoId)
+        val rows = result.rows
         val runs = runDao.getRunsForSpo(spoId)
 
         // (runId, indexInRun) -> глобальный номер трубы
@@ -376,7 +377,10 @@ class UchetRepository(
             diameterStats = stats,
             bhaComponents = bhaDao.getForSpo(spoId),
             totalPipes = rows.size,
-            totalLengthM = rows.sumOf { it.lengthM }
+            totalLengthM = rows.sumOf { it.lengthM },
+            // Общий итог — по всей СПО, включая оборудование после последней трубы.
+            totalPipesOnly = result.totalPipesOnly,
+            totalWithBha = result.totalWithBha
         )
     }
 

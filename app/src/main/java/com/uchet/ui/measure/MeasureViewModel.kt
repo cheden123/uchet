@@ -62,15 +62,25 @@ class MeasureViewModel(private val repo: UchetRepository) : ViewModel() {
     val presets: StateFlow<List<DiameterPreset>> = repo.observePresets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** Нарастающая длина для последней трубы активного ряда (текущая длина колонны). */
+    /** Компоновка текущей СПО — нужна только как триггер пересчёта lastCumulative. */
+    private val bha = _spoId
+        .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repo.observeBha(id) }
+
+    /**
+     * Нарастающая длина для последней трубы активного ряда (текущая длина колонны),
+     * включая оборудование после неё. Пересчитывается при изменении труб,
+     * оборудования ряда и компоновки (раньше смена компоновки не вызывала пересчёт).
+     * Если в активном ряду ещё нет труб — берётся pipeIndex = 0: длина всех
+     * предыдущих рядов + оборудование в начале ряда + компоновка (раньше было null → «0 м»).
+     */
     val lastCumulative: StateFlow<CumulativeLength?> =
-        combine(_spoId, activeRun, pipes, crossovers) { spoId, run, p, c ->
-            Quad(spoId, run, p, c)
+        combine(_spoId, activeRun, pipes, crossovers, bha) { spoId, run, p, _, _ ->
+            Triple(spoId, run, p)
         }
-            .flatMapLatest { (spoId, run, p, c) ->
+            .flatMapLatest { (spoId, run, p) ->
                 flow {
-                    if (spoId != null && run != null && p.isNotEmpty()) {
-                        emit(repo.getCumulativeLengthUpTo(spoId, run.id, p.last().indexInRun))
+                    if (spoId != null && run != null) {
+                        emit(repo.getCumulativeLengthUpTo(spoId, run.id, p.lastOrNull()?.indexInRun ?: 0))
                     } else {
                         emit(null)
                     }
@@ -144,6 +154,4 @@ class MeasureViewModel(private val repo: UchetRepository) : ViewModel() {
     fun rememberDiameter(label: String) = repo.setLastDiameter(label)
 
     fun lastDiameterOrBlank(): String = repo.lastDiameter() ?: ""
-
-    private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 }
