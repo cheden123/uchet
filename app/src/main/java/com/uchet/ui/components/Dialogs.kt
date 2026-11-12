@@ -33,6 +33,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.uchet.data.model.CrossoverTypes
+import com.uchet.util.MAX_REASONABLE_PIPE_M
+import com.uchet.util.formatMeters
+import com.uchet.util.parseCmInput
 
 private const val CUSTOM_KEY = "__custom__"
 
@@ -266,6 +269,8 @@ fun PipeEditorDialog(
 
     val lengthCm = lengthText.toIntOrNull() ?: 0
     val canSave = lengthCm > 0 && diameter.isNotBlank()
+    // > 20 м — не запрещаем, но подсвечиваем: скорее всего лишняя цифра.
+    val suspicious = parseCmInput(lengthText)?.isSuspicious == true
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -276,6 +281,12 @@ fun PipeEditorDialog(
                     value = lengthText,
                     onValueChange = { lengthText = it.digitsOnly().take(6) },
                     label = { Text("Длина, см") },
+                    isError = suspicious,
+                    supportingText = if (suspicious) {
+                        @Composable { Text("Больше ${formatMeters(MAX_REASONABLE_PIPE_M)} м — проверьте, нет ли лишней цифры") }
+                    } else {
+                        null
+                    },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()

@@ -63,19 +63,11 @@ import com.uchet.ui.components.DiameterPickerDialog
 import com.uchet.ui.components.EmptyState
 import com.uchet.ui.components.SectionHeader
 import com.uchet.ui.components.digitsOnly
+import com.uchet.util.MAX_REASONABLE_PIPE_M
 import com.uchet.util.formatMetersFull
+import com.uchet.util.parseCmInput
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
-
-/**
- * Разбор ввода длины трубы: базовые метры + дробная часть (введённые цифры).
- * Обычный режим: baseMeters = 0, ввод в сантиметрах целиком ("963" → 9.63 м).
- * Режим "Все N": baseMeters = 8/9/10, вводятся только сантиметры ("63" → 9.63 м).
- */
-fun parseCmInput(digits: String, baseMeters: Int = 0): Double? {
-    val value = digits.trim().toIntOrNull() ?: return null
-    return baseMeters + value / 100.0
-}
 
 @Composable
 fun MeasureScreen(
@@ -134,15 +126,22 @@ fun MeasureScreen(
     var editingCrossover by remember { mutableStateOf<CrossoverEntity?>(null) }
     var deletePipeTarget by remember { mutableStateOf<PipeEntity?>(null) }
     var deleteCrossoverTarget by remember { mutableStateOf<CrossoverEntity?>(null) }
+    // Длина > 20 м ждёт подтверждения (вероятно, лишняя цифра).
+    var suspiciousLength by remember { mutableStateOf<Double?>(null) }
 
-    fun addPipe() {
-        val meters = parseCmInput(lengthText, if (allSameBaseMeters > 0) allSameBaseMeters else 0) ?: return
+    /** [confirmed] = true — пользователь подтвердил подозрительно большую длину. */
+    fun addPipe(confirmed: Boolean = false) {
+        val input = parseCmInput(lengthText, if (allSameBaseMeters > 0) allSameBaseMeters else 0) ?: return
         if (diameter.isBlank()) {
             showDiameterPicker = true
             scope.launch { snackbarHostState.showSnackbar("Выберите типоразмер") }
             return
         }
-        viewModel.addPipeMeters(meters, diameter)
+        if (input.isSuspicious && !confirmed) {
+            suspiciousLength = input.meters
+            return
+        }
+        viewModel.addPipeMeters(input.meters, diameter)
         lengthText = ""
         // Поле остаётся в фокусе для следующего ввода (одинаково для кнопки и галочки на клавиатуре).
         lengthFocusRequester.requestFocus()
@@ -393,6 +392,23 @@ fun MeasureScreen(
                 deletePipeTarget = null
             },
             onDismiss = { deletePipeTarget = null }
+        )
+    }
+
+    suspiciousLength?.let { m ->
+        ConfirmDialog(
+            title = "Проверьте длину",
+            text = "Длина ${formatMetersFull(m)} — больше ${formatMetersFull(MAX_REASONABLE_PIPE_M)}. " +
+                "Возможно, введена лишняя цифра. Добавить трубу с такой длиной?",
+            confirmLabel = "Добавить",
+            onConfirm = {
+                suspiciousLength = null
+                addPipe(confirmed = true)
+            },
+            onDismiss = {
+                suspiciousLength = null
+                lengthFocusRequester.requestFocus()
+            }
         )
     }
 
