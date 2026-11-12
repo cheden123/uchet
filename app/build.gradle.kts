@@ -36,6 +36,9 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        // flatMapLatest во ViewModel'ях — ExperimentalCoroutinesApi; разрешаем глобально,
+        // чтобы не размечать каждый файл и не получать предупреждения сборки.
+        freeCompilerArgs += "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
     }
 
     buildFeatures {
