@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.uchet.data.model.ExportData
+import com.uchet.data.model.ExportEquipment
 import com.uchet.data.model.SpoEntity
 import com.uchet.data.model.SpoPipeRow
 import com.uchet.util.formatDate
@@ -11,8 +12,13 @@ import com.uchet.util.formatMeters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.apache.poi.ss.usermodel.BorderStyle
+import org.apache.poi.ss.usermodel.FillPatternType
 import org.apache.poi.ss.usermodel.HorizontalAlignment
+import org.apache.poi.ss.usermodel.IndexedColors
+import org.apache.poi.ss.usermodel.PageMargin
+import org.apache.poi.ss.usermodel.PrintSetup
 import org.apache.poi.ss.usermodel.VerticalAlignment
+import org.apache.poi.ss.util.CellRangeAddress
 import org.apache.poi.xssf.usermodel.XSSFCellStyle
 import org.apache.poi.xssf.usermodel.XSSFRow
 import org.apache.poi.xssf.usermodel.XSSFSheet
@@ -24,246 +30,38 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Экспорт одной СПО в XLSX по образцу «ОТЧЁТ о состоянии и замере
- * насосно-компрессорных труб» (Лист3 загруженного примера).
+ * Экспорт одной СПО в XLSX — «ОТЧЁТ о состоянии и замере насосно-компрессорных труб».
  *
- * Один лист-отчёт: шапка (куст/скважина/месторождение, подрядчик, бригада,
- * трубы, СПО с длиной компоновки), двухколоночная таблица труб
- * (по 50 труб в колонке, 100 труб на страницу), нарастающая «Длина колонны»
- * от длины компоновки, строка переводника/оборудования после каждого десятка
- * труб с суммой этих 10 труб в «Примечание», подписи внизу.
+ * Вёрстка листа (A4, книжная, подгонка по ширине страницы):
+ *  1. Шапка: куст / скважина / месторождение, СПО и дата, подрядчик/бригада,
+ *     компоновка с длиной, сводка по типоразмерам, список оборудования
+ *     (переводники и т.п. — в шапке, НЕ строкой таблицы), итоги длины.
+ *  2. Таблица труб, сгруппированная по типоразмеру (порядок — первое появление
+ *     в колонне). У каждой группы своя нумерация труб (№ п/п с 1) и свой
+ *     счётчик блоков по 10 труб; после блока — строка суммы блока.
+ *     Двухколоночная вёрстка: до 100 труб группы на печатную страницу,
+ *     блоки 1–5 — в левой половине, 6–10 — в правой; дальше — разрыв страницы
+ *     и повтор заголовка группы.
+ *  3. «Длина колонны» у трубы — компоновка + все трубы СПО по эту трубу в
+ *     физическом порядке, БЕЗ оборудования (как было в экспорте раньше).
+ *     Итог с оборудованием и компоновкой — в шапке (totalWithBha).
+ *  4. Оборудование дополнительно указывается в «Примечании» трубы, после
+ *     которой оно стоит.
  *
- * Поля, отсутствующие в модели данных («Марка стали», «Подрядчик»,
- * «Бригада №», «ФИО мастера»), выводятся пустыми заглушками.
+ * Поля, которых нет в модели данных («Марка стали», «Подрядчик», «Бригада №»,
+ * «ФИО мастера»), выводятся пустыми заглушками.
  */
 class ExcelExporter(private val context: Context) {
 
     suspend fun export(data: ExportData): File = withContext(Dispatchers.IO) {
         val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-        val file = File(dir, buildFileName(data))
-        write(data, file)
+        val file = File(dir, exportFileName(data.spo))
+        writeReport(data, file)
         file
     }
 
     fun shareUri(file: File): Uri =
         FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-
-    private fun buildFileName(data: ExportData): String = exportFileName(data.spo)
-
-    private fun write(data: ExportData, file: File) {
-        XSSFWorkbook().use { wb ->
-            val titleStyle = wb.createCellStyle().apply {
-                setFont(wb.createFont().apply { bold = true; fontHeightInPoints = 14 })
-            }
-            val boldStyle = wb.createCellStyle().apply {
-                setFont(wb.createFont().apply { bold = true })
-            }
-            val headerStyle = wb.createCellStyle().apply {
-                setFont(wb.createFont().apply { bold = true })
-                alignment = HorizontalAlignment.CENTER
-                verticalAlignment = VerticalAlignment.CENTER
-                wrapText = true
-                addBorders(this)
-            }
-            val textStyle = wb.createCellStyle().apply { addBorders(this) }
-            val numStyle = wb.createCellStyle().apply {
-                dataFormat = wb.creationHelper.createDataFormat().getFormat("0.00")
-                addBorders(this)
-            }
-
-            writeReport(wb, data, titleStyle, boldStyle, headerStyle, textStyle, numStyle)
-
-            FileOutputStream(file).use { wb.write(it) }
-        }
-    }
-
-    private fun addBorders(style: XSSFCellStyle) {
-        style.borderTop = BorderStyle.THIN
-        style.borderBottom = BorderStyle.THIN
-        style.borderLeft = BorderStyle.THIN
-        style.borderRight = BorderStyle.THIN
-    }
-
-    private fun writeReport(
-        wb: XSSFWorkbook,
-        data: ExportData,
-        titleStyle: XSSFCellStyle,
-        boldStyle: XSSFCellStyle,
-        headerStyle: XSSFCellStyle,
-        textStyle: XSSFCellStyle,
-        numStyle: XSSFCellStyle
-    ) {
-        val sheet = wb.createSheet("Отчёт")
-        configureColumns(sheet)
-
-        val bhaTotal = data.bhaComponents.sumOf { it.lengthM }
-        val pipes = data.pipes
-
-        // Нарастающая длина «от забоя»: компоновка + трубы.
-        // Оборудование/переводники в «Длину колонны» не суммируются (как в примере).
-        val cumulative = DoubleArray(pipes.size)
-        var acc = bhaTotal
-        for (k in pipes.indices) {
-            acc += pipes[k].lengthM
-            cumulative[k] = acc
-        }
-
-        var r = 0
-
-        // --- шапка отчёта -------------------------------------------------
-        putText(sheet.createRow(r++), 0, "ОТЧЁТ", titleStyle)
-        putText(sheet.createRow(r++), 0, "о состоянии и замере насосно-компрессорных труб")
-        r++ // пустая строка
-        putText(
-            sheet.createRow(r++), 1,
-            "Куст №  ${data.spo.wellCluster}   Скважина № ${data.spo.wellNumber}  " +
-                "месторождение    ${data.spo.fieldName}"
-        )
-        val contractorRow = sheet.createRow(r++)
-        putText(contractorRow, 1, "Подрядчик  ")
-        putText(contractorRow, 5, "Бригада №")
-        val pipeInfoRow = sheet.createRow(r++)
-        putText(pipeInfoRow, 0, "Труба ${diameterSummary(data)}")
-        putText(pipeInfoRow, 6, "${data.spo.title.ifBlank { "СПО" }} L=${formatMeters(bhaTotal)}м.")
-        r++ // пустая строка
-        writeHeaderRow(sheet, r++, headerStyle)
-        r++ // пустая строка
-
-        // Начальное значение «Длины колонны» — длина компоновки.
-        val offsetRow = sheet.createRow(r++)
-        for (c in 0 until 6) putText(offsetRow, LEFT + c, "", textStyle)
-        putNum(offsetRow, LEFT + 4, bhaTotal, numStyle)
-
-        // --- данные: по 100 труб на страницу, две колонки по 50 -------------
-        var start = 0
-        var firstPage = true
-        while (start < pipes.size) {
-            if (!firstPage) {
-                sheet.createRow(r++) // пустая строка между страницами
-                writeHeaderRow(sheet, r++, headerStyle)
-            }
-            firstPage = false
-
-            val end = minOf(start + PIPES_PER_PAGE, pipes.size)
-            val pagePipes = pipes.subList(start, end)
-            val leftCount = minOf(PIPES_PER_COLUMN, pagePipes.size)
-            val rightCount = maxOf(0, pagePipes.size - leftCount)
-            val rows = maxOf(leftCount, rightCount)
-
-            fun sumRow(from: Int, endExclusive: Int) {
-                val row = sheet.createRow(r++)
-                val leftPipes = (from until minOf(endExclusive, leftCount)).map { pagePipes[it] }
-                val rightPipes = (from until minOf(endExclusive, rightCount)).map { pagePipes[leftCount + it] }
-                if (leftPipes.isNotEmpty()) {
-                    for (c in 0 until 6) putText(row, LEFT + c, "", textStyle)
-                    val nos = leftPipes.map { it.globalNumber }
-                    val eq = data.equipment.filter { it.afterPipe in nos }
-                    if (eq.isNotEmpty()) {
-                        putText(row, LEFT + 1, eq.joinToString("; ") { it.diameterLabel }, textStyle)
-                    }
-                    putNum(row, LEFT + 5, leftPipes.sumOf { it.lengthM }, numStyle)
-                }
-                if (rightPipes.isNotEmpty()) {
-                    for (c in 0 until 6) putText(row, RIGHT + c, "", textStyle)
-                    val nos = rightPipes.map { it.globalNumber }
-                    val eq = data.equipment.filter { it.afterPipe in nos }
-                    if (eq.isNotEmpty()) {
-                        putText(row, RIGHT + 1, eq.joinToString("; ") { it.diameterLabel }, textStyle)
-                    }
-                    putNum(row, RIGHT + 5, rightPipes.sumOf { it.lengthM }, numStyle)
-                }
-            }
-
-            var groupStart = 0
-            for (i in 0 until rows) {
-                val row = sheet.createRow(r++)
-                if (i < leftCount) {
-                    writePipeRow(row, LEFT, pagePipes[i], cumulative[start + i], textStyle, numStyle)
-                }
-                if (i < rightCount) {
-                    writePipeRow(
-                        row, RIGHT, pagePipes[leftCount + i],
-                        cumulative[start + leftCount + i], textStyle, numStyle
-                    )
-                }
-                if ((i + 1) % GROUP_SIZE == 0) {
-                    sumRow(groupStart, i + 1)
-                    groupStart = i + 1
-                }
-            }
-            if (groupStart < rows) {
-                sumRow(groupStart, rows)
-            }
-
-            start = end
-        }
-
-        // --- общий итог по СПО (из SpoPipeRowsResult, с оборудованием после последней трубы)
-        sheet.createRow(r++) // пустая строка
-        val totalRow = sheet.createRow(r++)
-        putText(totalRow, 0, "Итого: труб ${data.totalPipes} шт., длина труб ${formatMeters(data.totalLengthM)} м", boldStyle)
-        val totalRow2 = sheet.createRow(r++)
-        putText(
-            totalRow2, 0,
-            "Длина колонны с оборудованием ${formatMeters(data.totalPipesOnly)} м, " +
-                "с компоновкой ${formatMeters(data.totalWithBha)} м",
-            boldStyle
-        )
-
-        // --- подписи --------------------------------------------------------
-        sheet.createRow(r++) // пустая строка
-        val signRow = sheet.createRow(r++)
-        putText(signRow, 0, "Мастер ТКРС", boldStyle)
-        putText(signRow, 6, "Дата: ${formatDate(data.spo.startDate)}г.", boldStyle)
-        val signSub = sheet.createRow(r++)
-        putText(signSub, 1, "Фамилия,имя,отчество")
-        putText(signSub, 5, "Подпись")
-    }
-
-    private fun diameterSummary(data: ExportData): String =
-        data.diameterStats.joinToString("; ") { it.name }
-
-    private fun writeHeaderRow(sheet: XSSFSheet, rowIndex: Int, style: XSSFCellStyle) {
-        val row = sheet.createRow(rowIndex)
-        TABLE_HEADERS.forEachIndexed { i, h -> putText(row, LEFT + i, h, style) }
-        TABLE_HEADERS.forEachIndexed { i, h -> putText(row, RIGHT + i, h, style) }
-    }
-
-    private fun writePipeRow(
-        row: XSSFRow,
-        base: Int,
-        pipe: SpoPipeRow,
-        cumulative: Double,
-        textStyle: XSSFCellStyle,
-        numStyle: XSSFCellStyle
-    ) {
-        putNum(row, base + 0, pipe.globalNumber.toDouble(), textStyle) // № п/п
-        putText(row, base + 1, pipe.diameterLabel, textStyle)
-        putText(row, base + 2, "", textStyle) // Марка стали — заглушка
-        putNum(row, base + 3, pipe.lengthM, numStyle)
-        putNum(row, base + 4, cumulative, numStyle)
-        putText(row, base + 5, "", textStyle) // Примечание
-    }
-
-    private fun configureColumns(sheet: XSSFSheet) {
-        val widths = intArrayOf(6, 18, 8, 12, 12, 11)
-        for (i in widths.indices) {
-            sheet.setColumnWidth(LEFT + i, widths[i] * 256)
-            sheet.setColumnWidth(RIGHT + i, widths[i] * 256)
-        }
-    }
-
-    private fun putText(row: XSSFRow, col: Int, value: String, style: XSSFCellStyle? = null) {
-        val cell = row.createCell(col)
-        cell.setCellValue(value)
-        if (style != null) cell.cellStyle = style
-    }
-
-    private fun putNum(row: XSSFRow, col: Int, value: Double, style: XSSFCellStyle) {
-        val cell = row.createCell(col)
-        cell.setCellValue(value)
-        cell.cellStyle = style
-    }
 
     companion object {
         /**
@@ -290,19 +88,336 @@ class ExcelExporter(private val context: Context) {
             return cleaned.ifBlank { "SPO" }
         }
 
-        private const val LEFT = 0
-        private const val RIGHT = 6
-        private const val PIPES_PER_COLUMN = 50
-        private const val PIPES_PER_PAGE = 100
-        private const val GROUP_SIZE = 10
+        /** Пишет отчёт в [file]. Без Context — вызывается и из юнит-тестов. */
+        internal fun writeReport(data: ExportData, file: File) {
+            XSSFWorkbook().use { wb ->
+                ReportWriter(wb, data).write()
+                FileOutputStream(file).use { wb.write(it) }
+            }
+        }
 
-        private val TABLE_HEADERS = listOf(
+        /** Колонок в одной половине листа: № п/п, Диаметр, Марка, Длина, Длина колонны, Примечание. */
+        internal const val HALF_COLUMNS = 6
+        internal const val LEFT = 0
+        internal const val RIGHT = HALF_COLUMNS
+        internal const val LAST_COL = HALF_COLUMNS * 2 - 1
+        internal const val BLOCK_SIZE = 10
+        /** Блоков в одной половине страницы (5 × 10 = 50 труб). */
+        internal const val BLOCKS_PER_HALF = 5
+        internal const val PIPES_PER_PAGE = BLOCK_SIZE * BLOCKS_PER_HALF * 2
+
+        internal val TABLE_HEADERS = listOf(
             "№ п/п",
             "Диаметр/Толщина стенки НКТ",
             "Марка стали",
-            "Длина трубы,м",
-            "Длина колонны",
+            "Длина трубы, м",
+            "Длина колонны, м",
             "Примечание"
         )
+
+        internal const val NO_LABEL = "Без типоразмера"
     }
+}
+
+/** Труба в группе типоразмера: номер внутри группы, длина колонны, примечание. */
+private data class GroupPipe(
+    val row: SpoPipeRow,
+    val numberInGroup: Int,
+    val columnLength: Double,
+    val note: String
+)
+
+private data class PipeGroup(val label: String, val pipes: List<GroupPipe>) {
+    val totalLength: Double get() = pipes.sumOf { it.row.lengthM }
+}
+
+/** Построение одного листа-отчёта. Состояние — только текущая строка [r]. */
+private class ReportWriter(private val wb: XSSFWorkbook, private val data: ExportData) {
+
+    private val sheet: XSSFSheet = wb.createSheet("Отчёт")
+    private var r = 0
+
+    // ------------------------------------------------------------------ стили
+
+    private fun font(bold: Boolean = false, size: Short = 10) = wb.createFont().apply {
+        this.bold = bold
+        fontHeightInPoints = size
+    }
+
+    private fun XSSFCellStyle.bordered(): XSSFCellStyle = apply {
+        borderTop = BorderStyle.THIN
+        borderBottom = BorderStyle.THIN
+        borderLeft = BorderStyle.THIN
+        borderRight = BorderStyle.THIN
+    }
+
+    private val numFormat = wb.creationHelper.createDataFormat().getFormat("0.00")
+
+    private val titleStyle = wb.createCellStyle().apply {
+        setFont(font(bold = true, size = 14)); alignment = HorizontalAlignment.CENTER
+    }
+    private val subtitleStyle = wb.createCellStyle().apply {
+        setFont(font(bold = true, size = 11)); alignment = HorizontalAlignment.CENTER
+    }
+    private val infoStyle = wb.createCellStyle().apply { setFont(font()) }
+    private val infoBoldStyle = wb.createCellStyle().apply { setFont(font(bold = true)) }
+    private val headerStyle = wb.createCellStyle().apply {
+        setFont(font(bold = true, size = 9))
+        alignment = HorizontalAlignment.CENTER
+        verticalAlignment = VerticalAlignment.CENTER
+        wrapText = true
+        fillForegroundColor = IndexedColors.GREY_25_PERCENT.index
+        fillPattern = FillPatternType.SOLID_FOREGROUND
+    }.bordered()
+    private val groupStyle = wb.createCellStyle().apply {
+        setFont(font(bold = true, size = 11))
+        fillForegroundColor = IndexedColors.LIGHT_CORNFLOWER_BLUE.index
+        fillPattern = FillPatternType.SOLID_FOREGROUND
+    }.bordered()
+    private val textStyle = wb.createCellStyle().apply { setFont(font()) }.bordered()
+    private val centerStyle = wb.createCellStyle().apply {
+        setFont(font()); alignment = HorizontalAlignment.CENTER
+    }.bordered()
+    private val numStyle = wb.createCellStyle().apply { setFont(font()); dataFormat = numFormat }.bordered()
+    private val noteStyle = wb.createCellStyle().apply { setFont(font(size = 8)) }.bordered()
+    private val sumLabelStyle = wb.createCellStyle().apply {
+        setFont(font(bold = true, size = 9)); alignment = HorizontalAlignment.RIGHT
+    }.bordered()
+    private val sumNumStyle = wb.createCellStyle().apply {
+        setFont(font(bold = true)); dataFormat = numFormat
+    }.bordered()
+
+    // ------------------------------------------------------------------ данные
+
+    private val bhaTotal = data.bhaComponents.sumOf { it.lengthM }
+
+    /** Оборудование, привязанное к трубе (глобальный номер), — для «Примечания». */
+    private val equipmentByPipe: Map<Int, List<ExportEquipment>> =
+        data.equipment.filter { it.afterPipe > 0 }.groupBy { it.afterPipe }
+
+    private val groups: List<PipeGroup> = buildGroups()
+
+    /** Глобальный номер трубы -> «НКТ 73 №5» (как труба подписана в таблице). */
+    private val pipeCaption: Map<Int, String> = groups
+        .flatMap { g -> g.pipes.map { it.row.globalNumber to "${g.label} №${it.numberInGroup}" } }
+        .toMap()
+
+    private fun buildGroups(): List<PipeGroup> {
+        // «Длина колонны» — в физическом порядке по всей СПО (компоновка + трубы).
+        var acc = bhaTotal
+        val columnLength = HashMap<Long, Double>(data.pipes.size)
+        for (p in data.pipes) {
+            acc += p.lengthM
+            columnLength[p.pipeId] = acc
+        }
+        // Порядок групп — первое появление типоразмера в колонне.
+        val byLabel = LinkedHashMap<String, MutableList<SpoPipeRow>>()
+        for (p in data.pipes) byLabel.getOrPut(p.diameterLabel.ifBlank { ExcelExporter.NO_LABEL }) { mutableListOf() } += p
+        return byLabel.map { (label, rows) ->
+            PipeGroup(
+                label = label,
+                pipes = rows.mapIndexed { i, row ->
+                    GroupPipe(
+                        row = row,
+                        numberInGroup = i + 1,
+                        columnLength = columnLength.getValue(row.pipeId),
+                        note = equipmentByPipe[row.globalNumber].orEmpty().joinToString("; ") { equipmentShort(it) }
+                    )
+                }
+            )
+        }
+    }
+
+    // ------------------------------------------------------------------ лист
+
+    fun write() {
+        setupSheet()
+        writeHeader()
+        for (g in groups) writeGroup(g)
+        writeFooter()
+    }
+
+    private fun setupSheet() {
+        val widths = intArrayOf(5, 14, 7, 9, 10, 16)
+        for (i in widths.indices) {
+            sheet.setColumnWidth(ExcelExporter.LEFT + i, widths[i] * 256)
+            sheet.setColumnWidth(ExcelExporter.RIGHT + i, widths[i] * 256)
+        }
+        sheet.printSetup.apply {
+            paperSize = PrintSetup.A4_PAPERSIZE
+            landscape = false
+            fitWidth = 1
+            fitHeight = 0 // по высоте — сколько потребуется страниц
+        }
+        sheet.fitToPage = true
+        sheet.horizontallyCenter = true
+        sheet.setMargin(PageMargin.LEFT, 0.4)
+        sheet.setMargin(PageMargin.RIGHT, 0.4)
+        sheet.setMargin(PageMargin.TOP, 0.5)
+        sheet.setMargin(PageMargin.BOTTOM, 0.5)
+    }
+
+    private fun writeHeader() {
+        val spo = data.spo
+        mergedLine("ОТЧЁТ", titleStyle)
+        mergedLine("о состоянии и замере насосно-компрессорных труб", subtitleStyle)
+        r++
+        mergedLine(
+            "Куст № ${spo.wellCluster.ifBlank { "—" }}    " +
+                "Скважина № ${spo.wellNumber.ifBlank { "—" }}    " +
+                "Месторождение: ${spo.fieldName.ifBlank { "—" }}",
+            infoBoldStyle
+        )
+        mergedLine("СПО: ${spo.title.ifBlank { "СПО" }}    Дата начала: ${formatDate(spo.startDate)}", infoStyle)
+        mergedLine("Подрядчик: ____________________    Бригада № ______", infoStyle)
+
+        // Компоновка
+        val bha = data.bhaComponents.sortedBy { it.indexInBha }
+        mergedLine(
+            if (bha.isEmpty()) "Компоновка: нет"
+            else "Компоновка L = ${formatMeters(bhaTotal)} м: " +
+                bha.joinToString("; ") { c ->
+                    listOf(c.name, c.sizeLabel).filter { it.isNotBlank() }.joinToString(" ") +
+                        " ${formatMeters(c.lengthM)} м"
+                },
+            infoStyle
+        )
+
+        // Сводка по типоразмерам
+        mergedLine(
+            "Трубы: " + data.diameterStats.joinToString("; ") {
+                "${it.name.ifBlank { ExcelExporter.NO_LABEL }} — ${it.count} шт., ${formatMeters(it.lengthM)} м"
+            }.ifBlank { "нет" },
+            infoStyle
+        )
+
+        // Оборудование — в шапке, по строке на элемент (не строкой таблицы труб).
+        if (data.equipment.isEmpty()) {
+            mergedLine("Переводники и оборудование: нет", infoStyle)
+        } else {
+            mergedLine("Переводники и оборудование (${formatMeters(data.equipment.sumOf { it.lengthM })} м):", infoBoldStyle)
+            for (e in data.equipment) {
+                val where = if (e.afterPipe > 0) {
+                    "после трубы ${pipeCaption[e.afterPipe] ?: "№${e.afterPipe}"} (сквозной №${e.afterPipe})"
+                } else {
+                    "перед первой трубой ряда"
+                }
+                val note = e.note.takeIf { it.isNotBlank() }?.let { " — $it" }.orEmpty()
+                mergedLine("  ${e.number}. ${equipmentShort(e)}, $where$note", infoStyle)
+            }
+        }
+
+        // Итоги — из SpoPipeRowsResult (включая оборудование после последней трубы).
+        mergedLine(
+            "Итого: труб ${data.totalPipes} шт., длина труб ${formatMeters(data.totalLengthM)} м; " +
+                "с оборудованием ${formatMeters(data.totalPipesOnly)} м; " +
+                "с компоновкой ${formatMeters(data.totalWithBha)} м",
+            infoBoldStyle
+        )
+        r++
+    }
+
+    /** Группа одного типоразмера: заголовок, страницы по 100 труб, итог группы. */
+    private fun writeGroup(g: PipeGroup) {
+        val pages = g.pipes.chunked(ExcelExporter.PIPES_PER_PAGE)
+        for ((pageIndex, page) in pages.withIndex()) {
+            if (pageIndex > 0) sheet.setRowBreak(r - 1) // следующая страница той же группы
+            val cont = if (pageIndex > 0) " (продолжение)" else ""
+            mergedLine(
+                "${g.label}$cont — всего ${g.pipes.size} шт., ${formatMeters(g.totalLength)} м",
+                groupStyle,
+                bordered = true
+            )
+            writeTableHeader()
+
+            val blocks = page.chunked(ExcelExporter.BLOCK_SIZE)
+            val leftBlocks = (blocks.size + 1) / 2 // левая половина заполняется первой
+            val firstBlockNo = pageIndex * ExcelExporter.BLOCKS_PER_HALF * 2 + 1
+            for (bi in 0 until leftBlocks) {
+                val left = blocks[bi]
+                val right = blocks.getOrNull(leftBlocks + bi)
+                val height = maxOf(left.size, right?.size ?: 0)
+                for (k in 0 until height) {
+                    val row = sheet.createRow(r++)
+                    val lp = left.getOrNull(k)
+                    if (lp != null) writePipe(row, ExcelExporter.LEFT, lp) else emptyCells(row, ExcelExporter.LEFT)
+                    if (right != null) {
+                        val rp = right.getOrNull(k)
+                        if (rp != null) writePipe(row, ExcelExporter.RIGHT, rp) else emptyCells(row, ExcelExporter.RIGHT)
+                    }
+                }
+                val sumRow = sheet.createRow(r++)
+                writeBlockSum(sumRow, ExcelExporter.LEFT, firstBlockNo + bi, left)
+                if (right != null) writeBlockSum(sumRow, ExcelExporter.RIGHT, firstBlockNo + leftBlocks + bi, right)
+            }
+        }
+        mergedLine("Итого ${g.label}: ${g.pipes.size} шт., ${formatMeters(g.totalLength)} м", infoBoldStyle)
+        r++
+    }
+
+    private fun writeTableHeader() {
+        val row = sheet.createRow(r++)
+        row.heightInPoints = 26f
+        ExcelExporter.TABLE_HEADERS.forEachIndexed { i, h ->
+            text(row, ExcelExporter.LEFT + i, h, headerStyle)
+            text(row, ExcelExporter.RIGHT + i, h, headerStyle)
+        }
+    }
+
+    private fun writePipe(row: XSSFRow, base: Int, p: GroupPipe) {
+        num(row, base + 0, p.numberInGroup.toDouble(), centerStyle)
+        text(row, base + 1, p.row.diameterLabel, textStyle)
+        text(row, base + 2, "", textStyle) // Марка стали — заглушка
+        num(row, base + 3, p.row.lengthM, numStyle)
+        num(row, base + 4, p.columnLength, numStyle)
+        text(row, base + 5, p.note, noteStyle)
+    }
+
+    /** Строка суммы блока из 10 (или меньше в последнем блоке) труб. */
+    private fun writeBlockSum(row: XSSFRow, base: Int, blockNo: Int, block: List<GroupPipe>) {
+        val from = block.first().numberInGroup
+        val to = block.last().numberInGroup
+        text(row, base + 0, "Блок $blockNo (№$from–$to), ${block.size} шт.:", sumLabelStyle)
+        for (c in 1..2) text(row, base + c, "", sumLabelStyle)
+        sheet.addMergedRegion(CellRangeAddress(row.rowNum, row.rowNum, base, base + 2))
+        num(row, base + 3, block.sumOf { it.row.lengthM }, sumNumStyle)
+        text(row, base + 4, "", textStyle)
+        text(row, base + 5, "", textStyle)
+    }
+
+    private fun emptyCells(row: XSSFRow, base: Int) {
+        for (c in 0 until ExcelExporter.HALF_COLUMNS) text(row, base + c, "", textStyle)
+    }
+
+    private fun writeFooter() {
+        r++
+        val sign = sheet.createRow(r++)
+        text(sign, 0, "Мастер ТКРС ______________________", infoBoldStyle)
+        text(sign, ExcelExporter.RIGHT, "Дата: ${formatDate(data.spo.startDate)} г.", infoBoldStyle)
+        val sub = sheet.createRow(r++)
+        text(sub, 1, "Фамилия, имя, отчество", infoStyle)
+        text(sub, ExcelExporter.RIGHT, "Подпись ____________", infoStyle)
+    }
+
+    // ------------------------------------------------------------------ ячейки
+
+    /** Строка текста, растянутая на всю ширину листа (обе половины). */
+    private fun mergedLine(value: String, style: XSSFCellStyle, bordered: Boolean = false) {
+        val row = sheet.createRow(r++)
+        text(row, 0, value, style)
+        if (bordered) for (c in 1..ExcelExporter.LAST_COL) text(row, c, "", style)
+        sheet.addMergedRegion(CellRangeAddress(row.rowNum, row.rowNum, 0, ExcelExporter.LAST_COL))
+    }
+
+    private fun text(row: XSSFRow, col: Int, value: String, style: XSSFCellStyle) {
+        row.createCell(col).apply { setCellValue(value); cellStyle = style }
+    }
+
+    private fun num(row: XSSFRow, col: Int, value: Double, style: XSSFCellStyle) {
+        row.createCell(col).apply { setCellValue(value); cellStyle = style }
+    }
+
+    private fun equipmentShort(e: ExportEquipment): String =
+        listOf(e.typeName, e.diameterLabel).filter { it.isNotBlank() }.joinToString(" ") +
+            " ${formatMeters(e.lengthM)} м"
 }
