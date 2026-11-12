@@ -48,6 +48,11 @@ import com.uchet.ui.settings.SettingsScreen
 import com.uchet.ui.spopipes.SpoPipesScreen
 import com.uchet.ui.sposelect.SpoSelectScreen
 import com.uchet.ui.statistics.StatisticsScreen
+import com.uchet.ui.update.UpdateViewModel
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
 import com.uchet.util.formatDate
 import kotlinx.coroutines.launch
 
@@ -81,6 +86,36 @@ fun PipeTrackerApp() {
             launchSingleTop = true
             restoreState = true
         }
+    }
+
+    // Обновление из программы: тихая проверка при запуске; если вышла новая сборка —
+    // один раз спросить. Ошибки сети при запуске не показываем (они видны в настройках).
+    val updateViewModel: UpdateViewModel = viewModel()
+    val updateState by updateViewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { if (updateState == UpdateViewModel.State.Idle) updateViewModel.check() }
+    val available = updateState as? UpdateViewModel.State.Available
+    if (available != null && !updateViewModel.startupPromptHandled) {
+        val context = LocalContext.current
+        AlertDialog(
+            onDismissRequest = { updateViewModel.startupPromptHandled = true },
+            title = { Text("Доступно обновление") },
+            text = {
+                Text(
+                    "Сборка ${available.release.versionCode}: ${available.release.title}.\n" +
+                        "Данные сохранятся — обновление ставится поверх."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    updateViewModel.startupPromptHandled = true
+                    updateViewModel.download(context.cacheDir)
+                    navigate(Destinations.SETTINGS)
+                }) { Text("Обновить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { updateViewModel.startupPromptHandled = true }) { Text("Позже") }
+            }
+        )
     }
 
     ModalNavigationDrawer(
@@ -147,7 +182,7 @@ fun PipeTrackerApp() {
                     )
                 }
                 composable(Destinations.SETTINGS) {
-                    SettingsScreen()
+                    SettingsScreen(updateViewModel = updateViewModel)
                 }
                 composable(Destinations.SELECT_SPO) {
                     SpoSelectScreen(mainViewModel = mainViewModel)

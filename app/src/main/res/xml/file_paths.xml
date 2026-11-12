@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="exports" path="exports/" />
+    <!-- Скачанный APK обновления (UpdateChecker), отдаётся установщику. -->
+    <cache-path name="updates" path="updates/" />
     <!-- Копии базы старых версий (LegacyDbGuard), чтобы их можно было отправить. -->
     <files-path name="legacy" path="legacy_backup/" />
     <!-- Копия прежней базы, сделанная перед загрузкой другой (SettingsScreen). -->

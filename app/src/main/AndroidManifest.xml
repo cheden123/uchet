@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Обновление из программы: проверка релизов GitHub и скачивание APK. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Запуск установки скачанного APK (пользователь разрешает один раз в настройках). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:name=".UchetApp"
         android:allowBackup="true"

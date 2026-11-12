@@ -49,6 +49,8 @@ import com.uchet.export.DbImport
 import com.uchet.ui.AppViewModelProvider
 import com.uchet.ui.components.ConfirmDialog
 import com.uchet.ui.components.SectionHeader
+import com.uchet.ui.update.UpdateSection
+import com.uchet.ui.update.UpdateViewModel
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileNotFoundException
@@ -59,6 +61,7 @@ private const val BEFORE_IMPORT_DIR = "before_import"
 
 @Composable
 fun SettingsScreen(
+    updateViewModel: UpdateViewModel,
     viewModel: SettingsViewModel = viewModel(factory = AppViewModelProvider.Factory)
 ) {
     val presets by viewModel.presets.collectAsStateWithLifecycle()
@@ -116,6 +119,9 @@ fun SettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            item { SectionHeader("Обновление") }
+            item { UpdateSection(updateViewModel) }
+
             item { SectionHeader("Пресеты типоразмеров") }
             item {
                 Row(

@@ -4,6 +4,30 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+/**
+ * Номер сборки = число коммитов в истории. Одинаков для сборки с компьютера и на
+ * GitHub (там checkout с fetch-depth: 0), растёт с каждым коммитом — по нему
+ * приложение понимает, что вышло обновление. Нет git — 1.
+ */
+val gitCommitCount: Int = try {
+    providers.exec { commandLine("git", "rev-list", "--count", "HEAD") }
+        .standardOutput.asText.get().trim().toInt()
+} catch (e: Exception) {
+    1
+}
+
+/**
+ * Ключ подписи. Обновление ставится поверх, только если APK подписан тем же ключом,
+ * что и установленное приложение. Путь к ключу — переменная окружения
+ * UCHET_KEYSTORE_FILE (на GitHub — из секрета) или свойство uchet.keystore в
+ * ~/.gradle/gradle.properties. Не задан — обычный debug-ключ этого компьютера.
+ * Пароли/алиас по умолчанию — как у стандартного debug.keystore.
+ */
+val uchetKeystore: String? = System.getenv("UCHET_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
+    ?: (findProperty("uchet.keystore") as String?)
+fun signingValue(env: String, prop: String, default: String): String =
+    System.getenv(env)?.takeIf { it.isNotBlank() } ?: (findProperty(prop) as String?) ?: default
+
 android {
     namespace = "com.uchet"
     compileSdk = 34
@@ -12,14 +36,30 @@ android {
         applicationId = "com.uchet"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = gitCommitCount
+        versionName = "1.0.$gitCommitCount"
         vectorDrawables {
             useSupportLibrary = true
+        }
+        // Откуда приложение берёт обновления (релизы GitHub).
+        buildConfigField("String", "UPDATE_REPO", "\"cheden123/uchet\"")
+    }
+
+    signingConfigs {
+        if (uchetKeystore != null) {
+            create("shared") {
+                storeFile = file(uchetKeystore)
+                storePassword = signingValue("UCHET_KEYSTORE_PASSWORD", "uchet.storePassword", "android")
+                keyAlias = signingValue("UCHET_KEY_ALIAS", "uchet.keyAlias", "androiddebugkey")
+                keyPassword = signingValue("UCHET_KEY_PASSWORD", "uchet.keyPassword", "android")
+            }
         }
     }
 
     buildTypes {
+        debug {
+            if (uchetKeystore != null) signingConfig = signingConfigs.getByName("shared")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -43,6 +83,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
