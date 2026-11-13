@@ -561,7 +561,7 @@ private fun CrossoverRow(
             )
             Text(
                 buildString {
-                    append(if (crossover.afterPipeIndex == 0) "перед 1-й трубой" else "после трубы № ${crossover.afterPipeIndex + 1}")
+                    append(if (crossover.afterPipeIndex == 0) "перед 1-й трубой" else "после трубы № ${crossover.afterPipeIndex}")
                     append(" · ")
                     append(formatMetersFull(crossover.lengthM))
                     if (crossover.note.isNotBlank()) append(" · ${crossover.note}")

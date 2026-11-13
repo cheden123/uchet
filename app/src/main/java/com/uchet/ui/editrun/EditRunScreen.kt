@@ -254,7 +254,7 @@ private fun EquipmentInfoRow(crossover: CrossoverEntity) {
         Text(
             "${CrossoverTypes.typeName(crossover.type, crossover.customTypeName)} · ${crossover.diameterLabel} · " +
                 "${formatMetersFull(crossover.lengthM)} — " +
-                (if (crossover.afterPipeIndex == 0) "перед 1-й трубой" else "после трубы № ${crossover.afterPipeIndex + 1}"),
+                (if (crossover.afterPipeIndex == 0) "перед 1-й трубой" else "после трубы № ${crossover.afterPipeIndex}"),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
