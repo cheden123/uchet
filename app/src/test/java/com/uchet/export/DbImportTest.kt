@@ -53,7 +53,7 @@ class DbImportTest {
             ctx.deleteDatabase(nameA)
         }
 
-        val info = DbImport.inspect(backup)
+        val info = DbImport.inspect(ctx, backup)
         assertEquals(AppDatabase.VERSION, info.version)
         assertEquals(2, info.spoCount)
         assertEquals(3, info.pipeCount)
@@ -88,7 +88,7 @@ class DbImportTest {
 
     private fun assertRejected(file: File, messagePart: String) {
         try {
-            DbImport.inspect(file)
+            DbImport.inspect(ctx, file)
             fail("Файл ${file.name} должен быть отвергнут")
         } catch (e: DbImport.InvalidDbException) {
             assertTrue("«${e.message}» не содержит «$messagePart»", e.message!!.contains(messagePart))
@@ -114,5 +114,34 @@ class DbImportTest {
         val newer = File(tmp.root, "newer.db")
         SQLiteDatabase.openOrCreateDatabase(newer, null).use { it.version = AppDatabase.VERSION + 1 }
         assertRejected(newer, "более новой версии")
+    }
+
+    @Test
+    fun inspect_rejectsSameVersionWithDifferentSchema() {
+        // Таблицы и версия 8 на месте, но схема другая (хэш Room не совпадает) —
+        // раньше такой файл принимался и ронял приложение при каждом запуске.
+        val name = "import-alien.db"
+        ctx.deleteDatabase(name)
+        room(name).apply { openHelper.writableDatabase; close() }
+        val file = ctx.getDatabasePath(name)
+        SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).use {
+            it.execSQL("UPDATE room_master_table SET identity_hash = 'другая сборка'")
+        }
+        try {
+            assertRejected(file, "Схема базы не подходит")
+        } finally {
+            ctx.deleteDatabase(name)
+        }
+    }
+
+    @Test
+    fun replace_isAtomicAndLeavesNoStagedFile() {
+        val src = File(tmp.root, "src.db").apply { writeText("новая") }
+        val dst = File(tmp.root, "dst.db").apply { writeText("старая") }
+        File(dst.path + "-wal").writeText("журнал старой базы")
+        DbImport.replace(src, dst)
+        assertEquals("новая", dst.readText())
+        assertTrue(!File(dst.path + "-wal").exists())
+        assertTrue(!DbImport.stagedFile(dst).exists())
     }
 }

@@ -91,24 +91,19 @@ fun SettingsScreen(
             .sortedByDescending { it.lastModified() }
     }
 
-    // Загрузка базы: файл уже скопирован и проверен, ждёт подтверждения.
+    // Загрузка базы: состояние и работа — в ViewModel (переживают поворот экрана).
     val importTmp = remember { File(context.cacheDir, "import/incoming.db") }
-    var pendingImport by remember { mutableStateOf<DbImport.Info?>(null) }
-    var importing by remember { mutableStateOf(false) }
+    val pendingImport by viewModel.pendingImport.collectAsStateWithLifecycle()
+    val importing by viewModel.importing.collectAsStateWithLifecycle()
 
     val pickDbFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            try {
-                pendingImport = viewModel.prepareImport(
-                    open = { context.contentResolver.openInputStream(uri) ?: throw FileNotFoundException("Файл недоступен") },
-                    tmp = importTmp
-                )
-            } catch (e: IOException) {
-                // В т.ч. DbImport.InvalidDbException — сообщение уже понятное пользователю.
-                snackbar.showSnackbar(e.message ?: "Не удалось прочитать файл")
-            }
-        }
+        val resolver = context.contentResolver
+        viewModel.prepareImport(
+            context = context.applicationContext,
+            open = { resolver.openInputStream(uri) ?: throw FileNotFoundException("Файл недоступен") },
+            tmp = importTmp
+        )
     }
 
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
@@ -224,29 +219,16 @@ fun SettingsScreen(
                 "Приложение перезапустится.",
             confirmLabel = "Заменить",
             onConfirm = {
-                pendingImport = null
-                importing = true
-                scope.launch {
-                    try {
-                        viewModel.importDatabase(
-                            tmp = importTmp,
-                            dbFile = context.getDatabasePath(AppDatabase.DB_NAME),
-                            safetyDir = File(context.filesDir, BEFORE_IMPORT_DIR)
-                        )
-                        restartApp(context)
-                    } catch (e: IOException) {
-                        importing = false
-                        snackbar.showSnackbar("Не удалось загрузить базу: ${e.message}")
-                    } catch (e: SQLException) {
-                        importing = false
-                        snackbar.showSnackbar("Ошибка базы: ${e.message}")
-                    }
-                }
+                val app = context.applicationContext
+                viewModel.confirmImport(
+                    tmp = importTmp,
+                    dbFile = app.getDatabasePath(AppDatabase.DB_NAME),
+                    safetyDir = File(app.filesDir, BEFORE_IMPORT_DIR),
+                    // Контекст приложения, а не экрана: перезапуск может случиться уже после ухода с него.
+                    restart = { restartApp(app) }
+                )
             },
-            onDismiss = {
-                pendingImport = null
-                importTmp.delete()
-            }
+            onDismiss = { viewModel.cancelImport(importTmp) }
         )
     }
 
