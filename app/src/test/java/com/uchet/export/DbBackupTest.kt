@@ -35,7 +35,7 @@ class DbBackupTest {
         try {
             val repo = UchetRepository(db, ctx.getSharedPreferences("backup-test", Context.MODE_PRIVATE))
             val spo = repo.createSpo(0, "1", "2", "Ванкор", "Спуск")
-            val run = repo.ensureActiveRun(spo)
+            val run = repo.ensureActiveRun(spo)!!
             repo.addPipeToEnd(run, 9.63, "НКТ 73")
 
             val out = DbBackup(repo, ctx.getDatabasePath(name), tmp.root).create()

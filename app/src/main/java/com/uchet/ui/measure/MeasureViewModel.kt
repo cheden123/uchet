@@ -106,9 +106,11 @@ class MeasureViewModel(private val repo: UchetRepository) : ViewModel() {
 
     /** Добавить трубу, длина уже в метрах (результат parseCmInput). */
     fun addPipeMeters(lengthM: Double, diameterLabel: String) {
-        val runId = activeRunId.value ?: return
+        // Ряд выбирает репозиторий (под Mutex): activeRunId здесь может на миг отставать
+        // от базы — сразу после «Завершить ряд» или на холодном старте.
+        val spoId = _spoId.value ?: return
         repo.setLastDiameter(diameterLabel)
-        viewModelScope.launch { repo.addPipeToEnd(runId, lengthM, diameterLabel) }
+        viewModelScope.launch { repo.addPipeToActiveRun(spoId, lengthM, diameterLabel) }
     }
 
     fun insertPipeAfter(afterIndex: Int, lengthCm: Int, diameterLabel: String) {

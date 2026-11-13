@@ -40,7 +40,7 @@ class UndoDeleteTest {
     @Test
     fun deleteMiddlePipe_thenRestore_restoresIndicesAndEquipment() = runBlocking {
         val spo = repo.createSpo(0, "1", "2", "Ванкор", "Спуск")
-        val run = repo.ensureActiveRun(spo)
+        val run = repo.ensureActiveRun(spo)!!
         repo.addPipeToEnd(run, 9.5, "НКТ 73")
         repo.addPipeToEnd(run, 9.6, "НКТ 73")
         repo.addPipeToEnd(run, 9.7, "НКТ 73")
@@ -61,7 +61,7 @@ class UndoDeleteTest {
     @Test
     fun deleteFirstPipe_thenRestore_keepsEquipmentBeforeFirstPipe() = runBlocking {
         val spo = repo.createSpo(0, "1", "2", "Ванкор", "Спуск")
-        val run = repo.ensureActiveRun(spo)
+        val run = repo.ensureActiveRun(spo)!!
         repo.addPipeToEnd(run, 9.5, "НКТ 73")
         repo.addPipeToEnd(run, 9.6, "НКТ 73")
         repo.addCrossover(run, 0, 0, "", "", 0.2, "")
@@ -77,7 +77,7 @@ class UndoDeleteTest {
     fun deleteCurrentSpo_thenRestore_restoresAllDataAndSelection() = runBlocking {
         val spo = repo.createSpo(0, "1", "2", "Ванкор", "Спуск")
         assertEquals(spo, repo.currentSpoId())
-        val run = repo.ensureActiveRun(spo)
+        val run = repo.ensureActiveRun(spo)!!
         repo.addPipeToEnd(run, 9.5, "НКТ 73")
         repo.addCrossover(run, 1, 0, "", "", 0.3, "")
         repo.addBhaComponent(spo, "Перо", 1.2, "")

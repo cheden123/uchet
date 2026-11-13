@@ -132,6 +132,7 @@ app/src/main/java/com/uchet/
 - `UndoDeleteTest` — отмена удаления трубы/СПО возвращает исходное состояние.
 - `DbBackupTest` — копия `.db` содержит свежие данные (WAL перенесён).
 - `FormatTest` — `parseCmInput` (> 15 м — предупреждение), `isCompleteCmInput`, `formatMeters`.
+- `ActiveRunSafetyTest` — несуществующая СПО не роняет приложение; труба после «Завершить ряд» попадает в новый ряд; двойное завершение безопасно.
 - `DbImportTest` — загрузка базы из файла, отказ для чужих/старых файлов.
 - `UpdateCheckerTest` — разбор релиза GitHub.
 

@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 /**
  * Хранит выбор текущей СПО (SharedPreferences) и отдаёт его реактивно
@@ -28,6 +29,17 @@ class MainViewModel(private val repo: UchetRepository) : ViewModel() {
 
     val hasCurrentSpo: StateFlow<Boolean> = _currentSpoId.map { it != null }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    init {
+        // Выбор СПО хранится отдельно от базы. Если такой СПО в базе нет (загружена
+        // другая база, старая база версий 1–6 стёрта при обновлении) — сбрасываем выбор,
+        // иначе экраны работали бы с несуществующей СПО.
+        _currentSpoId.value?.let { id ->
+            viewModelScope.launch {
+                if (repo.getSpo(id) == null && _currentSpoId.value == id) clearCurrent()
+            }
+        }
+    }
 
     fun refresh() {
         _currentSpoId.value = repo.currentSpoId()

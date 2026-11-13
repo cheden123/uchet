@@ -51,6 +51,14 @@ class UchetRepository(
         prefs.edit().remove(KEY_CURRENT_SPO).apply()
     }
 
+    /**
+     * Сбросить выбор СПО синхронно (commit): перед заменой базы и перезапуском
+     * процесса — apply() мог бы не успеть записать на диск.
+     */
+    fun clearCurrentSpoIdNow() {
+        prefs.edit().remove(KEY_CURRENT_SPO).commit()
+    }
+
     fun lastDiameter(): String? = prefs.getString(KEY_LAST_DIAMETER, null)
 
     fun setLastDiameter(label: String) {
@@ -144,11 +152,32 @@ class UchetRepository(
      * ВНУТРИ одной защищённой Mutex-операции — защита от параллельного вызова
      * из нескольких LaunchedEffect (иначе создалось бы два активных ряда).
      */
-    suspend fun ensureActiveRun(spoId: Long): Long = runMutex.withLock {
+    suspend fun ensureActiveRun(spoId: Long): Long? = runMutex.withLock { activeRunOrCreate(spoId) }
+
+    /**
+     * Активный ряд СПО (создаётся при отсутствии). Вызывать только под [runMutex].
+     * null — такой СПО нет в базе (например, после загрузки другой базы в настройках
+     * остался номер прежней СПО): вставка ряда нарушила бы внешний ключ и уронила бы приложение.
+     */
+    private suspend fun activeRunOrCreate(spoId: Long): Long? {
         val existing = runDao.getActiveRunInSpoSuspend(spoId)
-        if (existing != null) return@withLock existing.id
-        runDao.insert(RunEntity(spoId = spoId))
+        if (existing != null) return existing.id
+        if (spoDao.getById(spoId) == null) return null
+        return runDao.insert(RunEntity(spoId = spoId))
     }
+
+    /**
+     * Добавить трубу в конец АКТИВНОГО ряда СПО. Ряд определяется здесь, под [runMutex],
+     * а не на экране: сразу после «Завершить ряд» экран ещё может помнить прежний
+     * (уже завершённый) ряд или ещё не знать нового — труба не пропадёт и не уйдёт в старый ряд.
+     * @return false — СПО нет в базе, труба не добавлена.
+     */
+    suspend fun addPipeToActiveRun(spoId: Long, lengthM: Double, diameterLabel: String): Boolean =
+        runMutex.withLock {
+            val runId = activeRunOrCreate(spoId) ?: return@withLock false
+            addPipeToEnd(runId, lengthM, diameterLabel)
+            true
+        }
 
     fun observeActiveRun(spoId: Long): Flow<RunEntity?> = runDao.observeActiveRunInSpo(spoId)
 
@@ -177,9 +206,18 @@ class UchetRepository(
         val run = runDao.getRunById(runId) ?: return null
         if (run.isCompleted) return runDao.getActiveRunInSpo(run.spoId)?.id
         return runMutex.withLock {
-            runDao.completeRun(runId)
-            runDao.getActiveRunInSpo(run.spoId)?.id
-                ?: runDao.insert(RunEntity(spoId = run.spoId))
+            db.withTransaction {
+                // Пустой ряд не завершаем: двойное нажатие «Завершить ряд» иначе
+                // завершило бы и только что созданный новый (пустой) ряд.
+                val fresh = runDao.getRunById(runId)
+                if (fresh != null && !fresh.isCompleted && pipeDao.countInRun(runId) > 0) {
+                    runDao.completeRun(runId)
+                }
+                // Завершение и создание нового ряда — одной транзакцией: без «окна»,
+                // когда активного ряда нет вовсе.
+                runDao.getActiveRunInSpo(run.spoId)?.id
+                    ?: runDao.insert(RunEntity(spoId = run.spoId))
+            }
         }
     }
 
@@ -302,8 +340,9 @@ class UchetRepository(
 
     suspend fun getBha(spoId: Long): List<BhaComponentEntity> = bhaDao.getForSpo(spoId)
 
-    suspend fun addBhaComponent(spoId: Long, name: String, lengthM: Double, sizeLabel: String): Long =
-        bhaDao.insert(
+    /** @return id компонента или null, если СПО нет в базе (иначе — падение на внешнем ключе). */
+    suspend fun addBhaComponent(spoId: Long, name: String, lengthM: Double, sizeLabel: String): Long? =
+        if (spoDao.getById(spoId) == null) null else bhaDao.insert(
             BhaComponentEntity(
                 spoId = spoId,
                 indexInBha = bhaDao.getMaxIndex(spoId) + 1,

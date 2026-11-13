@@ -43,7 +43,7 @@ class DbImportTest {
             val repo = UchetRepository(dbA, ctx.getSharedPreferences("import-a", Context.MODE_PRIVATE))
             val s1 = repo.createSpo(0, "1", "2", "Ванкор", "Спуск")
             repo.createSpo(0, "3", "4", "Ванкор", "Подъём")
-            val run = repo.ensureActiveRun(s1)
+            val run = repo.ensureActiveRun(s1)!!
             repo.addPipeToEnd(run, 9.63, "НКТ 73")
             repo.addPipeToEnd(run, 9.71, "НКТ 73")
             repo.addPipeToEnd(run, 10.02, "НКТ 73")
