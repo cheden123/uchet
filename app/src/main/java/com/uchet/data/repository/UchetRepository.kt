@@ -1,0 +1,522 @@
+package com.uchet.data.repository
+
+import android.content.SharedPreferences
+import androidx.room.withTransaction
+import com.uchet.data.db.AppDatabase
+import com.uchet.data.model.BhaComponentEntity
+import com.uchet.data.model.CrossoverEntity
+import com.uchet.data.model.CrossoverTypes
+import com.uchet.data.model.CumulativeLength
+import com.uchet.data.model.DeletedPipe
+import com.uchet.data.model.DeletedSpo
+import com.uchet.data.model.DiameterPreset
+import com.uchet.data.model.ExportData
+import com.uchet.data.model.ExportDiameterRow
+import com.uchet.data.model.ExportEquipment
+import com.uchet.data.model.PipeEntity
+import com.uchet.data.model.RunEntity
+import com.uchet.data.model.SpoEntity
+import com.uchet.data.model.SpoPipeRow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+class UchetRepository(
+    private val db: AppDatabase,
+    private val prefs: SharedPreferences
+) {
+    private val spoDao = db.spoDao()
+    private val runDao = db.runDao()
+    private val pipeDao = db.pipeDao()
+    private val crossoverDao = db.crossoverDao()
+    private val bhaDao = db.bhaComponentDao()
+    private val presetDao = db.diameterPresetDao()
+
+    /** Защита от гонки при создании активного ряда (см. ensureActiveRun). */
+    private val runMutex = Mutex()
+
+    // ------------------------------------------------------------------ prefs
+
+    /** Текущая СПО — это выбор пользователя, хранится в SharedPreferences. */
+    fun currentSpoId(): Long? =
+        prefs.getLong(KEY_CURRENT_SPO, NO_SPO).takeIf { it != NO_SPO }
+
+    fun setCurrentSpoId(id: Long) {
+        prefs.edit().putLong(KEY_CURRENT_SPO, id).apply()
+    }
+
+    fun clearCurrentSpoId() {
+        prefs.edit().remove(KEY_CURRENT_SPO).apply()
+    }
+
+    /**
+     * Сбросить выбор СПО синхронно (commit): перед заменой базы и перезапуском
+     * процесса — apply() мог бы не успеть записать на диск.
+     */
+    fun clearCurrentSpoIdNow() {
+        prefs.edit().remove(KEY_CURRENT_SPO).commit()
+    }
+
+    fun lastDiameter(): String? = prefs.getString(KEY_LAST_DIAMETER, null)
+
+    fun setLastDiameter(label: String) {
+        prefs.edit().putString(KEY_LAST_DIAMETER, label).apply()
+    }
+
+    /** Своё значение «Все N» (целые метры), 0 — не задано. */
+    fun customAllSameBase(): Int = prefs.getInt(KEY_CUSTOM_ALL_SAME, 0)
+
+    fun setCustomAllSameBase(meters: Int) {
+        prefs.edit().putInt(KEY_CUSTOM_ALL_SAME, meters).apply()
+    }
+
+    // ------------------------------------------------------------------ СПО
+
+    fun observeSpos(): Flow<List<SpoEntity>> = spoDao.observeAll()
+
+    fun observeSpo(id: Long): Flow<SpoEntity?> = spoDao.observeById(id)
+
+    suspend fun getSpo(id: Long): SpoEntity? = spoDao.getById(id)
+
+    suspend fun getSpos(): List<SpoEntity> = spoDao.getAll()
+
+    /** Создаёт СПО; если ни одна не выбрана — сразу делает новую текущей. */
+    suspend fun createSpo(
+        startDate: Long,
+        wellCluster: String,
+        wellNumber: String,
+        fieldName: String,
+        title: String
+    ): Long {
+        val id = spoDao.insert(
+            SpoEntity(
+                startDate = startDate,
+                wellCluster = wellCluster,
+                wellNumber = wellNumber,
+                fieldName = fieldName,
+                title = title
+            )
+        )
+        if (currentSpoId() == null) setCurrentSpoId(id)
+        return id
+    }
+
+    suspend fun setSpoCompleted(id: Long, completed: Boolean) {
+        spoDao.getById(id)?.let { spoDao.update(it.copy(isCompleted = completed)) }
+    }
+
+    /**
+     * Удаляет СПО (каскадом — ряды, трубы, оборудование, компоновку) и возвращает
+     * снимок всех её данных для отмены удаления ([restoreSpo]).
+     */
+    suspend fun deleteSpo(spo: SpoEntity): DeletedSpo {
+        val wasCurrent = currentSpoId() == spo.id
+        val snapshot = db.withTransaction {
+            val s = DeletedSpo(
+                spo = spoDao.getById(spo.id) ?: spo,
+                runs = runDao.getRunsForSpo(spo.id),
+                pipes = pipeDao.getPipesForSpo(spo.id),
+                crossovers = crossoverDao.getCrossoversForSpo(spo.id),
+                bha = bhaDao.getForSpo(spo.id),
+                wasCurrent = wasCurrent
+            )
+            spoDao.delete(spo)
+            s
+        }
+        if (wasCurrent) clearCurrentSpoId()
+        return snapshot
+    }
+
+    /**
+     * Восстанавливает удалённую СПО с исходными id (порядок вставки — по внешним
+     * ключам: СПО -> ряды -> трубы/оборудование, компоновка). Если СПО была текущей
+     * и другая ещё не выбрана — снова делает её текущей.
+     */
+    suspend fun restoreSpo(d: DeletedSpo) {
+        db.withTransaction {
+            spoDao.insert(d.spo)
+            d.runs.forEach { runDao.insert(it) }
+            d.pipes.forEach { pipeDao.insert(it) }
+            d.crossovers.forEach { crossoverDao.insert(it) }
+            d.bha.forEach { bhaDao.insert(it) }
+        }
+        if (d.wasCurrent && currentSpoId() == null) setCurrentSpoId(d.spo.id)
+    }
+
+    // ------------------------------------------------------------------ ряды
+
+    /**
+     * Создать активный ряд, только если его ещё нет. Проверка к БД выполняется
+     * ВНУТРИ одной защищённой Mutex-операции — защита от параллельного вызова
+     * из нескольких LaunchedEffect (иначе создалось бы два активных ряда).
+     */
+    suspend fun ensureActiveRun(spoId: Long): Long? = runMutex.withLock { activeRunOrCreate(spoId) }
+
+    /**
+     * Активный ряд СПО (создаётся при отсутствии). Вызывать только под [runMutex].
+     * null — такой СПО нет в базе (например, после загрузки другой базы в настройках
+     * остался номер прежней СПО): вставка ряда нарушила бы внешний ключ и уронила бы приложение.
+     */
+    private suspend fun activeRunOrCreate(spoId: Long): Long? {
+        val existing = runDao.getActiveRunInSpoSuspend(spoId)
+        if (existing != null) return existing.id
+        if (spoDao.getById(spoId) == null) return null
+        return runDao.insert(RunEntity(spoId = spoId))
+    }
+
+    /**
+     * Добавить трубу в конец АКТИВНОГО ряда СПО. Ряд определяется здесь, под [runMutex],
+     * а не на экране: сразу после «Завершить ряд» экран ещё может помнить прежний
+     * (уже завершённый) ряд или ещё не знать нового — труба не пропадёт и не уйдёт в старый ряд.
+     * @return false — СПО нет в базе, труба не добавлена.
+     */
+    suspend fun addPipeToActiveRun(spoId: Long, lengthM: Double, diameterLabel: String): Boolean =
+        runMutex.withLock {
+            val runId = activeRunOrCreate(spoId) ?: return@withLock false
+            addPipeToEnd(runId, lengthM, diameterLabel)
+            true
+        }
+
+    fun observeActiveRun(spoId: Long): Flow<RunEntity?> = runDao.observeActiveRunInSpo(spoId)
+
+    suspend fun getActiveRun(spoId: Long): RunEntity? = runDao.getActiveRunInSpo(spoId)
+
+    fun observeRun(runId: Long): Flow<RunEntity?> = runDao.observeRunById(runId)
+
+    suspend fun getRuns(spoId: Long): List<RunEntity> = runDao.getRunsForSpo(spoId)
+
+    fun observeRuns(spoId: Long): Flow<List<RunEntity>> = runDao.observeRunsForSpo(spoId)
+
+    fun observePipesForSpo(spoId: Long): Flow<List<PipeEntity>> = pipeDao.observePipesForSpo(spoId)
+
+    /** Количество труб во всех переданных рядах (для расчёта глобального сдвига нумерации). */
+    suspend fun countPipesInRuns(runIds: List<Long>): Int =
+        if (runIds.isEmpty()) 0 else pipeDao.countInRuns(runIds)
+
+    fun observeCrossoversForSpo(spoId: Long): Flow<List<CrossoverEntity>> =
+        crossoverDao.observeCrossoversForSpo(spoId)
+
+    /**
+     * Завершает ряд и возвращает id нового активного ряда (создавая его),
+     * либо null, если активный ряд не найден (нечего завершать).
+     */
+    suspend fun completeRunAndStartNext(runId: Long): Long? {
+        val run = runDao.getRunById(runId) ?: return null
+        if (run.isCompleted) return runDao.getActiveRunInSpo(run.spoId)?.id
+        return runMutex.withLock {
+            db.withTransaction {
+                // Пустой ряд не завершаем: двойное нажатие «Завершить ряд» иначе
+                // завершило бы и только что созданный новый (пустой) ряд.
+                val fresh = runDao.getRunById(runId)
+                if (fresh != null && !fresh.isCompleted && pipeDao.countInRun(runId) > 0) {
+                    runDao.completeRun(runId)
+                }
+                // Завершение и создание нового ряда — одной транзакцией: без «окна»,
+                // когда активного ряда нет вовсе.
+                runDao.getActiveRunInSpo(run.spoId)?.id
+                    ?: runDao.insert(RunEntity(spoId = run.spoId))
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ трубы
+
+    fun observePipesForRun(runId: Long): Flow<List<PipeEntity>> =
+        pipeDao.observePipesForRun(runId)
+
+    suspend fun getPipesForRun(runId: Long): List<PipeEntity> =
+        pipeDao.getPipesForRun(runId)
+
+    /** Добавить трубу в конец ряда. */
+    suspend fun addPipeToEnd(runId: Long, lengthM: Double, diameterLabel: String): Long =
+        db.withTransaction {
+            val afterIndex = pipeDao.countInRun(runId)
+            pipeDao.insert(
+                PipeEntity(
+                    runId = runId,
+                    indexInRun = afterIndex + 1,
+                    lengthM = lengthM,
+                    diameterLabel = diameterLabel
+                )
+            )
+        }
+
+    /**
+     * Вставка трубы ПОСЛЕ трубы с [afterIndex] (0 = в самое начало ряда).
+     * Атомарно: сдвиг труб +1, сдвиг переводников +1, вставка новой трубы —
+     * чтобы переводники остались привязаны к той же физической трубе.
+     */
+    suspend fun insertPipeAt(
+        runId: Long,
+        afterIndex: Int,
+        lengthM: Double,
+        diameterLabel: String
+    ): Long = db.withTransaction {
+        pipeDao.shiftIndicesAfter(runId, afterIndex, +1)
+        crossoverDao.shiftIndicesAfter(runId, afterIndex, +1)
+        pipeDao.insert(
+            PipeEntity(
+                runId = runId,
+                indexInRun = afterIndex + 1,
+                lengthM = lengthM,
+                diameterLabel = diameterLabel
+            )
+        )
+    }
+
+    suspend fun updatePipe(pipe: PipeEntity) = pipeDao.update(pipe)
+
+    /**
+     * Удаление трубы с пересчётом индексов оставшихся. Переводник, стоявший
+     * после удаляемой трубы, переезжает на предыдущую трубу (он физически
+     * остаётся в том же месте колонны).
+     */
+    suspend fun deletePipe(pipe: PipeEntity): DeletedPipe = db.withTransaction {
+        pipeDao.deleteById(pipe.id)
+        pipeDao.shiftIndicesAfter(pipe.runId, pipe.indexInRun, -1)
+        val anchored = crossoverDao.getAnchoredAt(pipe.runId, pipe.indexInRun)
+        for (c in anchored) {
+            crossoverDao.update(c.copy(afterPipeIndex = (pipe.indexInRun - 1).coerceAtLeast(0)))
+        }
+        crossoverDao.shiftIndicesAfter(pipe.runId, pipe.indexInRun, -1)
+        // Снимок для отмены: сама труба + какое оборудование стояло после неё.
+        DeletedPipe(pipe, anchored.map { it.id })
+    }
+
+    /**
+     * Отмена [deletePipe] — обратные операции в одной транзакции:
+     * сдвиг труб и оборудования после (index-1) на +1, вставка трубы с исходным id
+     * на исходный indexInRun, возврат «перевешенного» оборудования на эту трубу.
+     * Оборудование, стоявшее после предыдущей трубы (index-1) до удаления, остаётся там.
+     */
+    suspend fun restorePipe(d: DeletedPipe) = db.withTransaction {
+        val p = d.pipe
+        pipeDao.shiftIndicesAfter(p.runId, p.indexInRun - 1, +1)
+        crossoverDao.shiftIndicesAfter(p.runId, p.indexInRun - 1, +1)
+        pipeDao.insert(p)
+        val anchoredIds = d.anchoredCrossoverIds.toSet()
+        for (c in crossoverDao.getCrossoversForRun(p.runId)) {
+            if (c.id in anchoredIds) crossoverDao.update(c.copy(afterPipeIndex = p.indexInRun))
+        }
+    }
+
+    // ------------------------------------------------------------------ переводники/оборудование
+
+    fun observeCrossoversForRun(runId: Long): Flow<List<CrossoverEntity>> =
+        crossoverDao.observeCrossoversForRun(runId)
+
+    suspend fun getCrossoversForRun(runId: Long): List<CrossoverEntity> =
+        crossoverDao.getCrossoversForRun(runId)
+
+    suspend fun addCrossover(
+        runId: Long,
+        afterPipeIndex: Int,
+        type: Int,
+        customTypeName: String,
+        diameterLabel: String,
+        lengthM: Double,
+        note: String
+    ): Long = crossoverDao.insert(
+        CrossoverEntity(
+            runId = runId,
+            afterPipeIndex = afterPipeIndex,
+            type = type,
+            customTypeName = customTypeName,
+            diameterLabel = diameterLabel,
+            lengthM = lengthM,
+            note = note
+        )
+    )
+
+    suspend fun updateCrossover(crossover: CrossoverEntity) = crossoverDao.update(crossover)
+
+    suspend fun deleteCrossover(id: Long) = crossoverDao.deleteById(id)
+
+    // ------------------------------------------------------------------ компоновка (BHA)
+
+    fun observeBha(spoId: Long): Flow<List<BhaComponentEntity>> = bhaDao.observeForSpo(spoId)
+
+    suspend fun getBha(spoId: Long): List<BhaComponentEntity> = bhaDao.getForSpo(spoId)
+
+    /** @return id компонента или null, если СПО нет в базе (иначе — падение на внешнем ключе). */
+    suspend fun addBhaComponent(spoId: Long, name: String, lengthM: Double, sizeLabel: String): Long? =
+        if (spoDao.getById(spoId) == null) null else bhaDao.insert(
+            BhaComponentEntity(
+                spoId = spoId,
+                indexInBha = bhaDao.getMaxIndex(spoId) + 1,
+                name = name,
+                lengthM = lengthM,
+                sizeLabel = sizeLabel
+            )
+        )
+
+    suspend fun deleteBhaComponent(id: Long) = bhaDao.deleteById(id)
+
+    suspend fun getBhaTotal(spoId: Long): Double = bhaDao.getBhaTotal(spoId)
+
+    // ------------------------------------------------------------------ пресеты
+
+    fun observePresets(): Flow<List<DiameterPreset>> = presetDao.observeAll()
+
+    suspend fun getPresets(): List<DiameterPreset> = presetDao.getAll()
+
+    /** Добавление пресета без дублей — с проверкой существующего имени. */
+    suspend fun addPreset(name: String): Result<Unit> {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return Result.failure(IllegalArgumentException("Пустое название"))
+        if (presetDao.countByName(trimmed) > 0) {
+            return Result.failure(IllegalArgumentException("Типоразмер «$trimmed» уже существует"))
+        }
+        presetDao.insert(DiameterPreset(name = trimmed))
+        return Result.success(Unit)
+    }
+
+    suspend fun deletePreset(preset: DiameterPreset) = presetDao.delete(preset)
+
+    // ------------------------------------------------------------------ нарастающая длина
+
+    /**
+     * Формула из ТЗ:
+     * withBha = bha_total
+     *        + pipes_and_equipment_in_current_run_up_to(pipeIndex)
+     *        + pipes_and_equipment_in_all_earlier_runs_of_this_spo.
+     */
+    suspend fun getCumulativeLengthUpTo(spoId: Long, runId: Long, pipeIndex: Int): CumulativeLength {
+        val bhaTotal = bhaDao.getBhaTotal(spoId)
+        val runs = runDao.getRunsForSpo(spoId)
+        var pipesAndEquipment = 0.0
+
+        for (run in runs) {
+            val pipes = pipeDao.getPipesForRun(run.id)
+            val crossovers = crossoverDao.getCrossoversForRun(run.id)
+
+            if (run.id == runId) {
+                // оборудование, стоящее перед первой трубой этого ряда
+                pipesAndEquipment += crossovers.filter { it.afterPipeIndex == 0 }.sumOf { it.lengthM }
+                for (p in pipes) {
+                    if (p.indexInRun > pipeIndex) break
+                    pipesAndEquipment += p.lengthM
+                    pipesAndEquipment += crossovers
+                        .filter { it.afterPipeIndex == p.indexInRun }
+                        .sumOf { it.lengthM }
+                }
+                break
+            } else {
+                pipesAndEquipment += pipes.sumOf { it.lengthM }
+                pipesAndEquipment += crossovers.sumOf { it.lengthM }
+            }
+        }
+        return CumulativeLength(
+            pipesOnly = pipesAndEquipment,
+            withBha = pipesAndEquipment + bhaTotal
+        )
+    }
+
+    // ------------------------------------------------------------------ сквозной список труб СПО
+
+    /**
+     * Все трубы СПО в физическом порядке с накопленной длиной у каждой,
+     * посчитанной за один проход (не N+1 запросов).
+     */
+    suspend fun getAllPipesInSpo(spoId: Long): SpoPipeRowsResult =
+        buildSpoPipeRows(
+            runs = runDao.getRunsForSpo(spoId),
+            pipes = pipeDao.getPipesForSpo(spoId),
+            crossovers = crossoverDao.getCrossoversForSpo(spoId),
+            bhaComponents = bhaDao.getForSpo(spoId)
+        )
+
+    // ------------------------------------------------------------------ экспорт
+
+    /** Данные для экспорта одной СПО (все ряды — одна сквозная таблица). */
+    suspend fun getExportData(spoId: Long): ExportData {
+        val spo = spoDao.getById(spoId) ?: error("СПО не найдена")
+        val result = getAllPipesInSpo(spoId)
+        val rows = result.rows
+        val runs = runDao.getRunsForSpo(spoId)
+
+        // (runId, indexInRun) -> глобальный номер трубы
+        val globalByLocal = HashMap<Pair<Long, Int>, Int>(rows.size)
+        for (r in rows) globalByLocal[r.runId to r.indexInRun] = r.globalNumber
+
+        val equipment = ArrayList<ExportEquipment>()
+        var eqNumber = 0
+        for ((order, run) in runs.withIndex()) {
+            val runNumber = order + 1
+            val cos = crossoverDao.getCrossoversForRun(run.id)
+            // оборудование перед первой трубой ряда (afterPipeIndex == 0)
+            for (c in cos.filter { it.afterPipeIndex == 0 }.sortedBy { it.id }) {
+                eqNumber++
+                equipment += toEquipment(eqNumber, runNumber, 0, c)
+            }
+            val pipes = pipeDao.getPipesForRun(run.id)
+            for (p in pipes) {
+                for (c in cos.filter { it.afterPipeIndex == p.indexInRun }.sortedBy { it.id }) {
+                    eqNumber++
+                    equipment += toEquipment(
+                        eqNumber,
+                        runNumber,
+                        globalByLocal[run.id to p.indexInRun] ?: 0,
+                        c
+                    )
+                }
+            }
+        }
+
+        // статистика по типоразмерам (порядок первого появления, не алфавит)
+        val firstAppearance = LinkedHashMap<String, MutableList<SpoPipeRow>>()
+        for (r in rows) firstAppearance.getOrPut(r.diameterLabel) { mutableListOf() }.add(r)
+        val stats = firstAppearance.map { (label, list) ->
+            ExportDiameterRow(name = label, lengthM = list.sumOf { it.lengthM }, count = list.size)
+        }
+
+        return ExportData(
+            spo = spo,
+            pipes = rows,
+            equipment = equipment,
+            diameterStats = stats,
+            bhaComponents = bhaDao.getForSpo(spoId),
+            totalPipes = rows.size,
+            totalLengthM = rows.sumOf { it.lengthM },
+            // Общий итог — по всей СПО, включая оборудование после последней трубы.
+            totalPipesOnly = result.totalPipesOnly,
+            totalWithBha = result.totalWithBha
+        )
+    }
+
+    private fun toEquipment(
+        number: Int,
+        runNumber: Int,
+        afterPipeGlobal: Int,
+        c: CrossoverEntity
+    ) = ExportEquipment(
+        number = number,
+        typeName = CrossoverTypes.typeName(c.type, c.customTypeName),
+        diameterLabel = c.diameterLabel,
+        afterPipe = afterPipeGlobal,
+        lengthM = c.lengthM,
+        note = c.note.ifBlank { "Ряд $runNumber" }
+    )
+
+    // ------------------------------------------------------------------ резервная копия
+
+    /**
+     * Переносит журнал WAL в основной файл БД (PRAGMA wal_checkpoint(FULL)), чтобы
+     * копия uchet.db содержала все данные. true — перенесено полностью (busy = 0);
+     * false — БД занята другой операцией, копировать сейчас нельзя.
+     */
+    suspend fun checkpointDatabase(): Boolean = withContext(Dispatchers.IO) {
+        db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)").use { c ->
+            c.moveToFirst() && c.getInt(0) == 0
+        }
+    }
+
+    companion object {
+        private const val KEY_CURRENT_SPO = "current_spo_id"
+        private const val KEY_LAST_DIAMETER = "last_diameter"
+        private const val KEY_CUSTOM_ALL_SAME = "custom_all_same_base"
+        private const val NO_SPO = -1L
+    }
+}
